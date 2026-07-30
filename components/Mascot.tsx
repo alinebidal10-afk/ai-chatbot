@@ -2,36 +2,42 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** Beat ranges in mascot-multiply.mp4 (seconds). */
+/** Beat ranges in the mascot video (seconds). */
 const SLEEP: [number, number] = [0.0, 2.58]; // loop, idle state
 const WAKE: [number, number] = [2.58, 4.29]; // play once
 const SIT: [number, number] = [4.29, 13.04]; // ping-pong, awake state
 const DOZE: [number, number] = [13.04, 14.38]; // play once, then SLEEP
 
 const IDLE_MS = 15000;
-const DOZE_RATE = 0.45; // lying down takes ~3s
 
 type Beat = "sleep" | "wake" | "sit-forward" | "sit-reverse" | "doze";
 
 interface MascotProps {
   /** increment to wake the cat (input focus, clicks elsewhere) */
   awakeSignal: number;
+  /** increment to reset the cat straight back to sleeping (new chat) */
+  resetSignal: number;
   /** while the model is generating, the cat stays awake — a status indicator */
   busy: boolean;
 }
 
-export default function Mascot({ awakeSignal, busy }: MascotProps) {
+export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // The sitting pose's baseline sits higher in the frame than the sleeping
-  // pose's; the `awake` class shifts the video up to compensate (CSS in
-  // globals.css). Set when WAKE starts, cleared when DOZE starts.
-  const [awake, setAwake] = useState(false);
   const beatRef = useRef<Beat>("sleep");
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reverseRaf = useRef<number | null>(null);
   const reducedMotion = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  // The sitting pose's baseline sits higher in the frame than the sleeping
+  // pose's; the `awake` class shifts the video up to compensate, `dozing`
+  // switches the transition to the DOZE beat length (CSS in globals.css).
+  const [awake, setAwake] = useState(false);
+  const [dozing, setDozing] = useState(false);
+  // WebM with alpha is the primary source; only the MP4 fallback needs the
+  // multiply blend to hide its white background.
+  const [mp4Fallback, setMp4Fallback] = useState(false);
 
   const stopReverse = () => {
     if (reverseRaf.current !== null) cancelAnimationFrame(reverseRaf.current);
@@ -52,8 +58,8 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
         stopReverse();
         beatRef.current = "doze";
         setAwake(false);
+        setDozing(true);
         v.currentTime = DOZE[0];
-        v.playbackRate = DOZE_RATE;
         void v.play();
       }
     }, IDLE_MS);
@@ -67,11 +73,29 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
       stopReverse();
       beatRef.current = "wake";
       setAwake(true);
-      v.playbackRate = 1;
+      setDozing(false);
       v.currentTime = WAKE[0];
       void v.play();
     }
   }, [resetIdleTimer]);
+
+  /** Straight back to the sleeping loop from the first frame (new chat). */
+  const resetToSleep = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    stopReverse();
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    beatRef.current = "sleep";
+    setAwake(false);
+    setDozing(false);
+    if (reducedMotion.current) {
+      v.pause();
+      v.currentTime = 1.0;
+      return;
+    }
+    v.currentTime = 0;
+    void v.play();
+  }, []);
 
   // Beat state machine driven by timeupdate
   useEffect(() => {
@@ -82,11 +106,20 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
       "(prefers-reduced-motion: reduce)",
     ).matches;
 
+    // Multiply is needed only when the browser fell back to the MP4 source.
+    const onLoadedData = () => {
+      setMp4Fallback(v.currentSrc.endsWith(".mp4"));
+    };
+    v.addEventListener("loadeddata", onLoadedData);
+    if (v.readyState >= 2 && v.currentSrc) onLoadedData();
+
     if (reducedMotion.current) {
       // No animation: hold a single sleeping frame.
       v.pause();
       v.currentTime = 1.0;
-      return;
+      return () => {
+        v.removeEventListener("loadeddata", onLoadedData);
+      };
     }
 
     const startReverse = () => {
@@ -111,6 +144,13 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
       reverseRaf.current = requestAnimationFrame(step);
     };
 
+    const backToSleep = () => {
+      beatRef.current = "sleep";
+      setDozing(false);
+      v.currentTime = SLEEP[0];
+      void v.play();
+    };
+
     const onTime = () => {
       const t = v.currentTime;
       switch (beatRef.current) {
@@ -126,22 +166,14 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
           if (t >= SIT[1] - 0.05) startReverse();
           break;
         case "doze":
-          if (t >= DOZE[1] - 0.05 || v.ended) {
-            beatRef.current = "sleep";
-            v.playbackRate = 1;
-            v.currentTime = SLEEP[0];
-            void v.play();
-          }
+          if (t >= DOZE[1] - 0.05 || v.ended) backToSleep();
           break;
       }
     };
 
     const onEnded = () => {
       if (beatRef.current === "doze" || beatRef.current === "sleep") {
-        beatRef.current = "sleep";
-        v.playbackRate = 1;
-        v.currentTime = SLEEP[0];
-        void v.play();
+        backToSleep();
       }
     };
 
@@ -153,6 +185,7 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
     void v.play();
 
     return () => {
+      v.removeEventListener("loadeddata", onLoadedData);
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("ended", onEnded);
       stopReverse();
@@ -170,39 +203,41 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
     wakeUp();
   }, [awakeSignal, wakeUp]);
 
+  // New chat: straight back to sleeping from the first frame
+  const firstReset = useRef(true);
+  useEffect(() => {
+    if (firstReset.current) {
+      firstReset.current = false;
+      return;
+    }
+    resetToSleep();
+  }, [resetSignal, resetToSleep]);
+
   // While generating, keep the cat awake
   useEffect(() => {
     if (busy) wakeUp();
   }, [busy, wakeUp]);
 
   return (
-    // 216x164 source at 480px wide -> 364px tall. The sleeping torso's
-    // underside sits 30.4% of frame height above the video's bottom edge, so
-    // the video overlaps the bar by 30.4% of 364px = 111px: the torso rests
-    // exactly on the bar's top edge and the paw tips (24.6%) hang ~21px down
-    // in front of it. top = -(364 - 111) = -253px, 40px in from the bar's
-    // left edge. No z-index anywhere in this subtree: it would create a
-    // stacking context that isolates the multiply blend and brings the white
-    // video background back — the paws paint over the bar purely because the
-    // mascot comes after the Composer in the DOM. The whole wrapper is
-    // click-through; the wake target is a separate hit area that stops above
-    // the bar so the bar's own controls stay clickable under the paws.
+    // Size and position come from the .mascot rules in globals.css, all
+    // derived from --mascot-w. The wrapper is click-through so the bar's
+    // controls stay usable under the paws; the wake hit-area below stops
+    // exactly at the bar's top edge (the video overlaps the bar by
+    // --mascot-w * 0.2311).
     <div
-      className={`mascot ${awake ? "awake" : ""} pointer-events-none absolute -top-[253px] left-10 h-[364px] w-[480px] select-none`}
+      className={`mascot ${awake ? "awake" : ""} ${dozing ? "dozing" : ""} ${
+        mp4Fallback ? "mp4-fallback" : ""
+      } select-none`}
     >
-      <video
-        ref={videoRef}
-        src="/mascot-multiply.mp4"
-        muted
-        playsInline
-        preload="auto"
-        className="pointer-events-none h-full w-full"
-      />
+      <video ref={videoRef} muted playsInline preload="auto">
+        <source src="/mascot.webm" type="video/webm" />
+        <source src="/mascot-multiply.mp4" type="video/mp4" />
+      </video>
       <button
         type="button"
         onClick={wakeUp}
         aria-label="Wake the mascot"
-        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-111px)] cursor-pointer focus:outline-none"
+        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.2311)] cursor-pointer focus:outline-none"
       />
     </div>
   );

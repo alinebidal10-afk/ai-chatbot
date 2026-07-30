@@ -42,6 +42,7 @@ export default function Chat() {
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [awakeSignal, setAwakeSignal] = useState(0);
+  const [mascotResetSignal, setMascotResetSignal] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   const wake = useCallback(() => setAwakeSignal((n) => n + 1), []);
@@ -81,6 +82,8 @@ export default function Chat() {
     setError(null);
     setStreamingText(null);
     setToolStatus(null);
+    // The mascot goes straight back to sleeping from the first frame.
+    setMascotResetSignal((n) => n + 1);
   }, []);
 
   const renameConversation = useCallback(
@@ -314,15 +317,17 @@ export default function Chat() {
         <div
           className="absolute inset-x-0 px-4 transition-[top] duration-500 ease-out"
           style={{
-            // Empty state: the greeting (48px) + 300px cat clearance + the
-            // 56px bar centre as one group -> bar top sits 146px below centre.
-            top: active ? "calc(100% - 80px)" : "calc(50% + 146px)",
+            // Empty state: the greeting (48px) + the mascot clearance
+            // (--mascot-w * 0.6) + the 56px bar centred as one group.
+            top: active
+              ? "calc(100% - 80px)"
+              : "calc(50% + var(--mascot-w) * 0.3 - 4px)",
           }}
         >
           <div className="relative mx-auto max-w-[720px]">
             <p
               aria-hidden={active}
-              className={`greeting pointer-events-none absolute bottom-[calc(100%+300px)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${
+              className={`greeting pointer-events-none absolute bottom-[calc(100%+var(--mascot-w)*0.6)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${
                 active ? "opacity-0" : "opacity-100"
               }`}
             >
@@ -336,9 +341,14 @@ export default function Chat() {
               onStop={stop}
               onFocusInput={wake}
             />
-            {/* After the Composer in the DOM so the paws paint on top of the
-                bar without any z-index (which would isolate the blend). */}
-            <Mascot awakeSignal={awakeSignal} busy={busy} />
+            {/* After the Composer in the DOM: keeps the paws in front of the
+                bar even in the MP4-fallback case, where the multiply blend
+                forces the z-index off (see globals.css). */}
+            <Mascot
+              awakeSignal={awakeSignal}
+              resetSignal={mascotResetSignal}
+              busy={busy}
+            />
           </div>
         </div>
       </main>

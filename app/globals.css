@@ -29,21 +29,55 @@ body {
   font-family: var(--font-cause), system-ui, sans-serif;
 }
 
-/* The mascot mp4 has a pure-white background and no alpha channel; multiply
-   makes the white rectangle disappear over white and the page gradient.
-   The mascot's container must never get an opaque background or isolation. */
+/* Every mascot measurement derives from this one width. */
+:root {
+  --mascot-w: 400px;
+}
+
+/* Anchored to the bar wrapper: the tail base (31.05% of frame width) lines
+   up with the bar's left edge, and the torso underside (30.4% of frame
+   height ≙ 23.11% of frame width) rests on the bar's top edge, paws and
+   tail hanging down in front of the bar. pointer-events stays off so the
+   bar's controls remain clickable under the paws; the wake hit-area is a
+   separate element that stops above the bar. */
+.mascot {
+  position: absolute;
+  width: var(--mascot-w);
+  left: calc(var(--mascot-w) * -0.3105);
+  bottom: calc(100% - var(--mascot-w) * 0.2311);
+  z-index: 2;
+  pointer-events: none;
+}
+
 .mascot video {
-  mix-blend-mode: multiply;
-  /* Settling back down tracks the DOZE beat (1.34s at 0.45x = 2.98s). */
-  transition: transform 2.98s ease-out;
+  width: 100%;
+  display: block;
+  /* Rising tracks the WAKE beat. */
+  transition: transform 1.71s ease-out;
+}
+
+/* Settling back down tracks the DOZE beat at natural speed. */
+.mascot.dozing video {
+  transition: transform 1.34s ease-in;
 }
 
 /* The sitting pose's base sits 14.9% of frame height above the bottom edge
-   vs 24.6% for the sleeping pose — without this shift the cat sinks ~22px
-   into the bar when it wakes. Rising tracks the WAKE beat (1.71s). */
+   vs 30.4% for the sleeping torso — without this shift the cat sinks into
+   the bar when it wakes. */
 .mascot.awake video {
   transform: translateY(-9.7%);
-  transition-duration: 1.71s;
+}
+
+/* MP4 fallback only (no VP9-alpha support): the file has a white background,
+   multiply hides it. Blending must not be isolated by a stacking context,
+   so the fallback also drops the z-index — DOM order still paints the
+   mascot in front of the bar. */
+.mascot.mp4-fallback {
+  z-index: auto;
+}
+
+.mascot.mp4-fallback video {
+  mix-blend-mode: multiply;
 }
 
 /* Tight viewports: the greeting shrinks first, then disappears — the
