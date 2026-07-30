@@ -229,7 +229,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // derived from --mascot-w. The wrapper is click-through so the bar's
     // controls stay usable under the paws; the wake hit-area below stops
     // exactly at the bar's top edge (the video overlaps the bar by
-    // --mascot-w * 0.2501).
+    // --mascot-w * 0.3246).
     <div
       className={`mascot ${awake ? "awake" : ""} ${dozing ? "dozing" : ""} ${
         mp4Fallback ? "mp4-fallback" : ""
@@ -243,7 +243,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         type="button"
         onClick={wakeUp}
         aria-label="Wake the mascot"
-        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.2501)] cursor-pointer focus:outline-none"
+        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.3246)] cursor-pointer focus:outline-none"
       />
     </div>
   );
