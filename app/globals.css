@@ -1,26 +1,95 @@
 @import "tailwindcss";
 
+/* Colour tokens sampled pixel-by-pixel from the mascot video — use exactly. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --cat-green: #88b76e; /* the cat's body green — primary colour */
+  --cat-outline: #366a16; /* the cat's outline green */
+  --cat-highlight: #d6f1bd; /* the cat's light fur tone */
+  --ink: #12300a; /* the only text colour that reads on green */
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-cat-green: var(--cat-green);
+  --color-cat-outline: var(--cat-outline);
+  --color-cat-highlight: var(--cat-highlight);
+  --color-ink: var(--ink);
+  --font-sans: var(--font-cause), system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Pure white at the top edge, full cat green at the bottom edge */
+  background: linear-gradient(to bottom, #ffffff 0%, var(--cat-green) 100%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-cause), system-ui, sans-serif;
+}
+
+/* The mascot mp4 has a pure-white background and no alpha channel; multiply
+   makes the white rectangle disappear over white and the page gradient.
+   The mascot's container must never get an opaque background or isolation. */
+.mascot video {
+  mix-blend-mode: multiply;
+  /* Settling back down tracks the DOZE beat (1.34s at 0.45x = 2.98s). */
+  transition: transform 2.98s ease-out;
+}
+
+/* The sitting pose's base sits 14.9% of frame height above the bottom edge
+   vs 24.6% for the sleeping pose — without this shift the cat sinks ~22px
+   into the bar when it wakes. Rising tracks the WAKE beat (1.71s). */
+.mascot.awake video {
+  transform: translateY(-9.7%);
+  transition-duration: 1.71s;
+}
+
+/* Sidebar rows appear in sequence as it opens (delay set inline per row). */
+.sidebar-row {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 300ms ease-out,
+    transform 300ms ease-out;
+}
+
+.sidebar-open .sidebar-row {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Blinking caret while the reply streams in */
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.stream-caret {
+  animation: caret-blink 1s step-end infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tool-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

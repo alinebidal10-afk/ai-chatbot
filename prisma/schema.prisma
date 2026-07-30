@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  title     String    @default("New chat")
+  modelId   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  // JSON-serialized content blocks: text, images and tool results in one record
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
