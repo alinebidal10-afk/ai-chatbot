@@ -9,6 +9,8 @@ const SIT: [number, number] = [4.29, 13.04]; // ping-pong, awake state
 const DOZE: [number, number] = [13.04, 14.38]; // play once, then SLEEP
 
 const IDLE_MS = 15000;
+// Standing up is brisk (1.71s beat -> ~1.07s); SIT and DOZE play at 1.0.
+const WAKE_RATE = 1.6;
 
 type Beat = "sleep" | "wake" | "sit-forward" | "sit-reverse" | "doze";
 
@@ -74,6 +76,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       beatRef.current = "wake";
       setAwake(true);
       setDozing(false);
+      v.playbackRate = WAKE_RATE;
       v.currentTime = WAKE[0];
       void v.play();
     }
@@ -88,6 +91,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     beatRef.current = "sleep";
     setAwake(false);
     setDozing(false);
+    v.playbackRate = 1;
     if (reducedMotion.current) {
       v.pause();
       v.currentTime = 1.0;
@@ -147,6 +151,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     const backToSleep = () => {
       beatRef.current = "sleep";
       setDozing(false);
+      v.playbackRate = 1;
       v.currentTime = SLEEP[0];
       void v.play();
     };
@@ -160,6 +165,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         case "wake":
           if (t >= WAKE[1]) {
             beatRef.current = "sit-forward";
+            v.playbackRate = 1;
           }
           break;
         case "sit-forward":
@@ -223,7 +229,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // derived from --mascot-w. The wrapper is click-through so the bar's
     // controls stay usable under the paws; the wake hit-area below stops
     // exactly at the bar's top edge (the video overlaps the bar by
-    // --mascot-w * 0.2311).
+    // --mascot-w * 0.2501).
     <div
       className={`mascot ${awake ? "awake" : ""} ${dozing ? "dozing" : ""} ${
         mp4Fallback ? "mp4-fallback" : ""
@@ -237,7 +243,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         type="button"
         onClick={wakeUp}
         aria-label="Wake the mascot"
-        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.2311)] cursor-pointer focus:outline-none"
+        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.2501)] cursor-pointer focus:outline-none"
       />
     </div>
   );

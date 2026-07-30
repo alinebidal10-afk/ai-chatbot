@@ -35,16 +35,17 @@ body {
 }
 
 /* Anchored to the bar wrapper: the tail base (31.05% of frame width) lines
-   up with the bar's left edge, and the torso underside (30.4% of frame
-   height ≙ 23.11% of frame width) rests on the bar's top edge, paws and
-   tail hanging down in front of the bar. pointer-events stays off so the
-   bar's controls remain clickable under the paws; the wake hit-area is a
-   separate element that stops above the bar. */
+   up with the bar's left edge, and the sleeping torso underside (30.43% of
+   frame height ≙ 23.11% of frame width) sinks 2.5% of the element's height
+   into the bar so the contact reads as weight — hence the 25.01% offset.
+   Paws and tail hang down in front of the bar. pointer-events stays off so
+   the bar's controls remain clickable under the paws; the wake hit-area is
+   a separate element that stops above the bar. */
 .mascot {
   position: absolute;
   width: var(--mascot-w);
   left: calc(var(--mascot-w) * -0.3105);
-  bottom: calc(100% - var(--mascot-w) * 0.2311);
+  bottom: calc(100% - var(--mascot-w) * 0.2501);
   z-index: 2;
   pointer-events: none;
 }
@@ -52,8 +53,8 @@ body {
 .mascot video {
   width: 100%;
   display: block;
-  /* Rising tracks the WAKE beat. */
-  transition: transform 1.71s ease-out;
+  /* Rising tracks the WAKE beat at 1.6x (1.71s / 1.6). */
+  transition: transform 1.07s ease-out;
 }
 
 /* Settling back down tracks the DOZE beat at natural speed. */
@@ -61,11 +62,11 @@ body {
   transition: transform 1.34s ease-in;
 }
 
-/* The sitting pose's base sits 14.9% of frame height above the bottom edge
-   vs 30.4% for the sleeping torso — without this shift the cat sinks into
-   the bar when it wakes. */
+/* The sitting pose's feet sit 14.9% of frame height above the bottom edge
+   vs 30.43% for the sleeping torso — this lift lands the feet on the same
+   contact line, keeping the 2.5% sink. */
 .mascot.awake video {
-  transform: translateY(-9.7%);
+  transform: translateY(-15.53%);
 }
 
 /* MP4 fallback only (no VP9-alpha support): the file has a white background,
