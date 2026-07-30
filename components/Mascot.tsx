@@ -2,15 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** Beat ranges in the mascot video (seconds). */
+/** Beat ranges in the mascot video (seconds). WAKE starts at the frame
+ *  where the cat actually begins to move — frames 62-85 of the original
+ *  beat are a motionless dead second, and skipping them is invisible
+ *  (silhouette identical within 0.5%). */
 const SLEEP: [number, number] = [0.0, 2.58]; // loop, idle state
-const WAKE: [number, number] = [2.58, 4.29]; // play once
+const WAKE: [number, number] = [3.54, 4.29]; // play once — 0.75s
 const SIT: [number, number] = [4.29, 13.04]; // ping-pong, awake state
 const DOZE: [number, number] = [13.04, 14.38]; // play once, then SLEEP
 
 const IDLE_MS = 15000;
-// Standing up is brisk (1.71s beat -> ~1.07s); SIT and DOZE play at 1.0.
-const WAKE_RATE = 1.6;
+const OFFSETS_FPS = 24;
 
 type Beat = "sleep" | "wake" | "sit-forward" | "sit-reverse" | "doze";
 
@@ -28,15 +30,12 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
   const beatRef = useRef<Beat>("sleep");
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reverseRaf = useRef<number | null>(null);
+  const pinRaf = useRef<number | null>(null);
+  const offsetsRef = useRef<number[] | null>(null);
   const reducedMotion = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
 
-  // The sitting pose's baseline sits higher in the frame than the sleeping
-  // pose's; the `awake` class shifts the video up to compensate, `dozing`
-  // switches the transition to the DOZE beat length (CSS in globals.css).
-  const [awake, setAwake] = useState(false);
-  const [dozing, setDozing] = useState(false);
   // WebM with alpha is the primary source; only the MP4 fallback needs the
   // multiply blend to hide its white background.
   const [mp4Fallback, setMp4Fallback] = useState(false);
@@ -59,8 +58,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       if (beatRef.current === "sit-forward" || beatRef.current === "sit-reverse") {
         stopReverse();
         beatRef.current = "doze";
-        setAwake(false);
-        setDozing(true);
         v.currentTime = DOZE[0];
         void v.play();
       }
@@ -74,9 +71,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     if (beatRef.current === "sleep" || beatRef.current === "doze") {
       stopReverse();
       beatRef.current = "wake";
-      setAwake(true);
-      setDozing(false);
-      v.playbackRate = WAKE_RATE;
       v.currentTime = WAKE[0];
       void v.play();
     }
@@ -89,9 +83,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     stopReverse();
     if (idleTimer.current) clearTimeout(idleTimer.current);
     beatRef.current = "sleep";
-    setAwake(false);
-    setDozing(false);
-    v.playbackRate = 1;
     if (reducedMotion.current) {
       v.pause();
       v.currentTime = 1.0;
@@ -101,7 +92,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     void v.play();
   }, []);
 
-  // Beat state machine driven by timeupdate
+  // Beat state machine driven by timeupdate + per-frame contact pinning
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -118,13 +109,39 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     if (v.readyState >= 2 && v.currentSrc) onLoadedData();
 
     if (reducedMotion.current) {
-      // No animation: hold a single sleeping frame.
+      // No animation: hold a single sleeping frame (offset there is ~0).
       v.pause();
       v.currentTime = 1.0;
       return () => {
         v.removeEventListener("loadeddata", onLoadedData);
       };
     }
+
+    // Per-frame vertical offsets (percent) keyed to the video clock keep
+    // the cat's contact line pinned to the bar in every beat and in both
+    // directions of the SIT ping-pong. No CSS transition could do this:
+    // the video's motion is a step, not a curve.
+    void fetch("/mascot-offsets.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: number[] | null) => {
+        if (Array.isArray(data) && data.length > 0) offsetsRef.current = data;
+      })
+      .catch(() => {
+        /* without offsets the cat still animates, just unpinned */
+      });
+
+    const pin = () => {
+      const offsets = offsetsRef.current;
+      if (offsets) {
+        const f = Math.max(
+          0,
+          Math.min(offsets.length - 1, Math.round(v.currentTime * OFFSETS_FPS)),
+        );
+        v.style.transform = `translateY(${offsets[f]}%)`;
+      }
+      pinRaf.current = requestAnimationFrame(pin);
+    };
+    pinRaf.current = requestAnimationFrame(pin);
 
     const startReverse = () => {
       // Browsers do not support negative playbackRate — step currentTime
@@ -150,8 +167,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
 
     const backToSleep = () => {
       beatRef.current = "sleep";
-      setDozing(false);
-      v.playbackRate = 1;
       v.currentTime = SLEEP[0];
       void v.play();
     };
@@ -165,7 +180,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         case "wake":
           if (t >= WAKE[1]) {
             beatRef.current = "sit-forward";
-            v.playbackRate = 1;
           }
           break;
         case "sit-forward":
@@ -195,6 +209,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("ended", onEnded);
       stopReverse();
+      if (pinRaf.current !== null) cancelAnimationFrame(pinRaf.current);
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
   }, []);
@@ -229,11 +244,9 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // derived from --mascot-w. The wrapper is click-through so the bar's
     // controls stay usable under the paws; the wake hit-area below stops
     // exactly at the bar's top edge (the video overlaps the bar by
-    // --mascot-w * 0.3246).
+    // --mascot-w * 0.325).
     <div
-      className={`mascot ${awake ? "awake" : ""} ${dozing ? "dozing" : ""} ${
-        mp4Fallback ? "mp4-fallback" : ""
-      } select-none`}
+      className={`mascot ${mp4Fallback ? "mp4-fallback" : ""} select-none`}
     >
       <video ref={videoRef} muted playsInline preload="auto">
         <source src="/mascot.webm" type="video/webm" />
@@ -243,7 +256,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         type="button"
         onClick={wakeUp}
         aria-label="Wake the mascot"
-        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.3246)] cursor-pointer focus:outline-none"
+        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-var(--mascot-w)*0.325)] cursor-pointer focus:outline-none"
       />
     </div>
   );

@@ -46,28 +46,18 @@ body {
   position: absolute;
   width: var(--mascot-w);
   left: calc(var(--mascot-w) * -0.3105);
-  bottom: calc(100% - var(--mascot-w) * 0.3246);
+  bottom: calc(100% - var(--mascot-w) * 0.325);
   z-index: 2;
   pointer-events: none;
 }
 
+/* NO transition on the transform: the vertical offset is driven per-frame
+   from the video clock (mascot-offsets.json lookup in Mascot.tsx), which
+   keeps the contact line pinned to the bar in every beat, at any rate,
+   and through the reversed half of the SIT ping-pong. */
 .mascot video {
   width: 100%;
   display: block;
-  /* Rising tracks the WAKE beat at 1.6x (1.71s / 1.6). */
-  transition: transform 1.07s ease-out;
-}
-
-/* Settling back down tracks the DOZE beat at natural speed. */
-.mascot.dozing video {
-  transition: transform 1.34s ease-in;
-}
-
-/* The sitting pose's feet sit 15.6% of frame height above the bottom edge
-   vs 40.95% for the sleeping torso — this lift lands the feet on the same
-   contact line, keeping the 1.8% sink. */
-.mascot.awake video {
-  transform: translateY(-25.35%);
 }
 
 /* MP4 fallback only (no VP9-alpha support): the file has a white background,
