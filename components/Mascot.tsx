@@ -176,19 +176,19 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
   }, [busy, wakeUp]);
 
   return (
-    <button
-      type="button"
-      onClick={wakeUp}
-      aria-label="Wake the mascot"
-      // 216x164 source at 300px wide -> 228px tall. The sleeping cat's paws
-      // sit 24.6% of frame height above the video's bottom edge; overlapping
-      // the bar by 27% of the rendered height (61px) lands the paws ~5px
-      // onto the bar's surface: top = -(228 - 61) = -167px, 40px in from
-      // the bar's left edge. No z-index here: it would create a stacking
-      // context that isolates the multiply blend and brings the white
-      // video background back — paint order comes from DOM position after
-      // the Composer.
-      className={`mascot ${awake ? "awake" : ""} absolute -top-[167px] left-10 h-[228px] w-[300px] cursor-pointer select-none focus:outline-none`}
+    // 216x164 source at 480px wide -> 364px tall. The sleeping torso's
+    // underside sits 30.4% of frame height above the video's bottom edge, so
+    // the video overlaps the bar by 30.4% of 364px = 111px: the torso rests
+    // exactly on the bar's top edge and the paw tips (24.6%) hang ~21px down
+    // in front of it. top = -(364 - 111) = -253px, 40px in from the bar's
+    // left edge. No z-index anywhere in this subtree: it would create a
+    // stacking context that isolates the multiply blend and brings the white
+    // video background back — the paws paint over the bar purely because the
+    // mascot comes after the Composer in the DOM. The whole wrapper is
+    // click-through; the wake target is a separate hit area that stops above
+    // the bar so the bar's own controls stay clickable under the paws.
+    <div
+      className={`mascot ${awake ? "awake" : ""} pointer-events-none absolute -top-[253px] left-10 h-[364px] w-[480px] select-none`}
     >
       <video
         ref={videoRef}
@@ -196,8 +196,14 @@ export default function Mascot({ awakeSignal, busy }: MascotProps) {
         muted
         playsInline
         preload="auto"
-        className="h-full w-full"
+        className="pointer-events-none h-full w-full"
       />
-    </button>
+      <button
+        type="button"
+        onClick={wakeUp}
+        aria-label="Wake the mascot"
+        className="pointer-events-auto absolute inset-x-0 top-0 h-[calc(100%-111px)] cursor-pointer focus:outline-none"
+      />
+    </div>
   );
 }

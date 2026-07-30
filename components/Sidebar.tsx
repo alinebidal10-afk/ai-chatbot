@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  MessageSquarePlus,
+  Pencil,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import type { ConversationSummary } from "@/lib/chat-types";
 
 interface SidebarProps {
@@ -12,7 +18,11 @@ interface SidebarProps {
   onNewChat: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  onDeleteAll: () => void;
 }
+
+const actionRowClass =
+  "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-ink hover:bg-cat-highlight/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink";
 
 export default function Sidebar({
   open,
@@ -22,15 +32,42 @@ export default function Sidebar({
   onNewChat,
   onRename,
   onDelete,
+  onDeleteAll,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    ConversationSummary[] | null
+  >(null);
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+
+  // Live search across titles and message content, debounced server call.
+  useEffect(() => {
+    const q = query.trim();
+    if (!searchOpen || !q) {
+      setSearchResults(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/conversations?q=${encodeURIComponent(q)}`);
+        if (res.ok) setSearchResults(await res.json());
+      } catch {
+        /* keep the previous results on a failed search */
+      }
+    }, 200);
+    return () => clearTimeout(t);
+  }, [query, searchOpen]);
 
   const commitRename = (id: string) => {
     if (draft.trim()) onRename(id, draft.trim());
     setEditingId(null);
   };
+
+  const listed = searchResults ?? conversations;
 
   return (
     <aside
@@ -39,23 +76,99 @@ export default function Sidebar({
       aria-hidden={!open}
     >
       <div className="flex h-full w-72 flex-col p-3">
+        <button type="button" onClick={onNewChat} className={actionRowClass}>
+          <MessageSquarePlus size={16} strokeWidth={1.75} />
+          New chat
+        </button>
+
         <button
           type="button"
-          onClick={onNewChat}
-          className="mb-3 rounded-xl border border-cat-outline/50 bg-cat-highlight px-3 py-2 text-left text-sm font-medium text-ink hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink"
+          onClick={() => {
+            setSearchOpen((v) => !v);
+            setQuery("");
+          }}
+          className={actionRowClass}
+          aria-expanded={searchOpen}
         >
-          + New chat
+          <Search size={16} strokeWidth={1.75} />
+          Search in chats
         </button>
-        <h2 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink/80">
-          Conversations
+        {searchOpen && (
+          <div className="mb-1 mt-1 flex items-center gap-1 rounded-lg border border-cat-outline/50 bg-white px-2 py-1.5">
+            <Search size={14} strokeWidth={1.75} className="shrink-0 text-ink/50" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setSearchOpen(false);
+                  setQuery("");
+                }
+              }}
+              placeholder="Search titles and messages"
+              aria-label="Search in chats"
+              className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-ink/40"
+            />
+            <button
+              type="button"
+              aria-label="Close search"
+              onClick={() => {
+                setSearchOpen(false);
+                setQuery("");
+              }}
+              className="shrink-0 rounded p-0.5 text-ink/60 hover:bg-cat-highlight/60 hover:text-ink"
+            >
+              <X size={14} strokeWidth={1.75} />
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setConfirmingDeleteAll(true)}
+          className={actionRowClass}
+        >
+          <Trash2 size={16} strokeWidth={1.75} />
+          Delete all
+        </button>
+        {confirmingDeleteAll && (
+          <div className="mb-1 mt-1 rounded-lg border border-red-800/40 bg-red-100 p-2 text-sm text-red-900">
+            <p className="mb-2">Delete all conversations? This cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmingDeleteAll(false)}
+                className="rounded px-2 py-1 text-xs font-medium text-ink hover:bg-white/50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingDeleteAll(false);
+                  setSearchResults(null);
+                  setQuery("");
+                  onDeleteAll();
+                }}
+                className="rounded border border-red-800/40 bg-white px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-50"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
+
+        <h2 className="mb-1 mt-3 px-2 text-xs font-medium tracking-[0.04em] text-ink/60">
+          Recents
         </h2>
         <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-          {conversations.length === 0 && (
-            <p className="sidebar-row px-1 text-sm text-ink/80">
-              No conversations yet. Say hello!
+          {listed.length === 0 && (
+            <p className="sidebar-row px-2 text-sm text-ink/80">
+              {searchResults ? "No matches." : "No conversations yet. Say hello!"}
             </p>
           )}
-          {conversations.map((c, i) => (
+          {listed.map((c, i) => (
             <div
               key={c.id}
               className={`sidebar-row group flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-ink ${

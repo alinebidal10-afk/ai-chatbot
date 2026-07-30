@@ -46,6 +46,20 @@ body {
   transition-duration: 1.71s;
 }
 
+/* Tight viewports: the greeting shrinks first, then disappears — the
+   mascot and the bar never shrink. */
+@media (max-height: 700px) {
+  .greeting {
+    font-size: 32px;
+  }
+}
+
+@media (max-height: 560px) {
+  .greeting {
+    display: none;
+  }
+}
+
 /* Sidebar rows appear in sequence as it opens (delay set inline per row). */
 .sidebar-row {
   opacity: 0;

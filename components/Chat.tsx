@@ -97,6 +97,12 @@ export default function Chat() {
     [],
   );
 
+  const deleteAll = useCallback(async () => {
+    setConversations([]);
+    newChat();
+    await fetch("/api/conversations", { method: "DELETE" }).catch(() => {});
+  }, [newChat]);
+
   const deleteConversation = useCallback(
     async (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -188,9 +194,21 @@ export default function Chat() {
               case "status_done":
                 setToolStatus(null);
                 break;
-              case "title":
-                void refreshConversations();
+              case "title": {
+                // Patch the sidebar row in place — no full refetch. If the
+                // row isn't in the list yet (race with the initial refresh),
+                // fall back to refetching.
+                const id = event.id as string;
+                const title = event.title as string;
+                setConversations((prev) => {
+                  if (!prev.some((c) => c.id === id)) {
+                    void refreshConversations();
+                    return prev;
+                  }
+                  return prev.map((c) => (c.id === id ? { ...c, title } : c));
+                });
                 break;
+              }
               case "error":
                 setError(event.message as string);
                 break;
@@ -253,7 +271,7 @@ export default function Chat() {
     messages.length > 0 || streamingText !== null || busy || error !== null;
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-dvh overflow-hidden">
       <Sidebar
         open={sidebarOpen}
         conversations={conversations}
@@ -262,6 +280,7 @@ export default function Chat() {
         onNewChat={newChat}
         onRename={(id, t) => void renameConversation(id, t)}
         onDelete={(id) => void deleteConversation(id)}
+        onDeleteAll={() => void deleteAll()}
       />
 
       <main className="relative min-w-0 flex-1">
@@ -295,15 +314,15 @@ export default function Chat() {
         <div
           className="absolute inset-x-0 px-4 transition-[top] duration-500 ease-out"
           style={{
-            // Empty state: the greeting (48px) + 200px cat clearance + the
-            // 56px bar centre as one group -> bar top sits 96px below centre.
-            top: active ? "calc(100% - 80px)" : "calc(50% + 96px)",
+            // Empty state: the greeting (48px) + 300px cat clearance + the
+            // 56px bar centre as one group -> bar top sits 146px below centre.
+            top: active ? "calc(100% - 80px)" : "calc(50% + 146px)",
           }}
         >
           <div className="relative mx-auto max-w-[720px]">
             <p
               aria-hidden={active}
-              className={`pointer-events-none absolute bottom-[calc(100%+200px)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${
+              className={`greeting pointer-events-none absolute bottom-[calc(100%+300px)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${
                 active ? "opacity-0" : "opacity-100"
               }`}
             >

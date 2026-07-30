@@ -118,10 +118,10 @@ export default function MessageList({
           </div>
         )}
 
-        {/* Clearance for the docked bar (56px + 24px margin) plus the 200px
-            reserved above the bar for the mascot (sitting height ~159px),
+        {/* Clearance for the docked bar (56px + 24px margin) plus the 300px
+            reserved above the bar for the mascot (sitting height ~254px),
             so the last message never slides underneath either. */}
-        <div ref={bottomRef} className="h-[280px]" />
+        <div ref={bottomRef} className="h-[380px]" />
       </div>
     </div>
   );

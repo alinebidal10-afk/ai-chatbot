@@ -78,17 +78,19 @@ export function getProvider(id: string): Provider {
   return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0];
 }
 
-/** Short conversation title from the first user message. */
+/** Titles always use the small fast model, regardless of the chat model. */
+const TITLE_MODEL_ID = "claude-haiku-4-5";
+
+/** Short conversation title from the first user message. Non-streaming. */
 export async function generateTitle(
-  modelId: string,
   firstUserText: string,
 ): Promise<string | null> {
   try {
     const response = await getClient().messages.create({
-      model: modelId,
-      max_tokens: 64,
+      model: TITLE_MODEL_ID,
+      max_tokens: 32,
       system:
-        "Generate a short conversation title, four or five words, in the language of the message. Reply with the title only - no quotes, no punctuation at the end.",
+        "Generate a conversation title of at most five words, in the same language the message is written in. Reply with the title only - plain text, no quotes, no trailing punctuation.",
       messages: [{ role: "user", content: firstUserText.slice(0, 2000) }],
     });
     const block = response.content.find((b) => b.type === "text");

@@ -14,7 +14,7 @@ type SseEvent =
   | { type: "text"; text: string }
   | { type: "status"; text: string }
   | { type: "status_done" }
-  | { type: "title"; title: string }
+  | { type: "title"; id: string; title: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
 
   // Create or load the conversation, persist the user message up front so
   // nothing is lost even if the model call fails.
+  const isNewConversation = !body.conversationId;
   const conversation = body.conversationId
     ? await prisma.conversation.update({
         where: { id: body.conversationId },
@@ -98,6 +99,27 @@ export async function POST(request: NextRequest) {
         title: conversation.title,
         modelId,
       });
+
+      // Title generation starts immediately for brand-new conversations —
+      // concurrent with the reply stream, never re-run on later messages.
+      // On failure the first 40 characters of the message stand in.
+      let titleTask: Promise<void> | null = null;
+      if (isNewConversation) {
+        const firstText = userContent.find(
+          (b): b is Anthropic.TextBlockParam => b.type === "text",
+        );
+        const raw = typeof firstText?.text === "string" ? firstText.text.trim() : "";
+        if (raw) {
+          titleTask = (async () => {
+            const title = (await generateTitle(raw)) ?? raw.slice(0, 40);
+            await prisma.conversation.update({
+              where: { id: conversation.id },
+              data: { title },
+            });
+            send({ type: "title", id: conversation.id, title });
+          })().catch(() => {});
+        }
+      }
 
       try {
         let rounds = 0;
@@ -161,29 +183,14 @@ export async function POST(request: NextRequest) {
           messages.push({ role: "user", content: results });
         }
 
-        // Title for brand-new conversations, from the first user message
-        if (conversation.title === "New chat") {
-          const firstText = userContent.find(
-            (b): b is Anthropic.TextBlockParam => b.type === "text",
-          );
-          if (firstText?.text) {
-            const title = await generateTitle(modelId, firstText.text);
-            if (title) {
-              await prisma.conversation.update({
-                where: { id: conversation.id },
-                data: { title },
-              });
-              send({ type: "title", title });
-            }
-          }
-        }
-
+        if (titleTask) await titleTask;
         send({ type: "done" });
       } catch (err) {
         const aborted =
           abort.signal.aborted ||
           (err instanceof Error && err.name === "AbortError");
         await persistPartial().catch(() => {});
+        if (titleTask) await titleTask;
         if (!aborted) {
           const message =
             err instanceof Error ? err.message : "Something went wrong.";
