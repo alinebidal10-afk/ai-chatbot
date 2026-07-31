@@ -16,6 +16,12 @@ const OFFSETS_FPS = 24;
 
 type Beat = "sleep" | "wake" | "sit-forward" | "sit-reverse" | "doze";
 
+/** Autoplay only works while muted; if it is refused anyway, the paused
+ *  video shows its first (sleeping) frame — a still cat, not a blank box. */
+function safePlay(v: HTMLVideoElement) {
+  v.play().catch(() => {});
+}
+
 interface MascotProps {
   /** increment to wake the cat (input focus, clicks elsewhere) */
   awakeSignal: number;
@@ -23,9 +29,16 @@ interface MascotProps {
   resetSignal: number;
   /** while the model is generating, the cat stays awake — a status indicator */
   busy: boolean;
+  /** true while the on-screen keyboard covers the bar: fade out and pause */
+  hidden?: boolean;
 }
 
-export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) {
+export default function Mascot({
+  awakeSignal,
+  resetSignal,
+  busy,
+  hidden = false,
+}: MascotProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const shiftRef = useRef<HTMLDivElement>(null);
   const beatRef = useRef<Beat>("sleep");
@@ -36,6 +49,12 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
   const reducedMotion = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  // Set by the mount effect so the hidden/visibility effects can pause and
+  // resume the pin loop without owning it.
+  const startPinRef = useRef<(() => void) | null>(null);
+  const stopPinRef = useRef<(() => void) | null>(null);
 
   const stopReverse = () => {
     if (reverseRaf.current !== null) cancelAnimationFrame(reverseRaf.current);
@@ -56,7 +75,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         stopReverse();
         beatRef.current = "doze";
         v.currentTime = DOZE[0];
-        void v.play();
+        safePlay(v);
       }
     }, IDLE_MS);
   }, []);
@@ -69,7 +88,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       stopReverse();
       beatRef.current = "wake";
       v.currentTime = WAKE[0];
-      void v.play();
+      safePlay(v);
     }
   }, [resetIdleTimer]);
 
@@ -132,7 +151,32 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       }
       pinRaf.current = requestAnimationFrame(pin);
     };
-    pinRaf.current = requestAnimationFrame(pin);
+    const startPin = () => {
+      if (pinRaf.current === null) pinRaf.current = requestAnimationFrame(pin);
+    };
+    const stopPin = () => {
+      if (pinRaf.current !== null) cancelAnimationFrame(pinRaf.current);
+      pinRaf.current = null;
+    };
+    startPinRef.current = startPin;
+    stopPinRef.current = stopPin;
+    startPin();
+
+    // Backgrounded tab: stop the rAF loop and the video so the cat does not
+    // burn battery offscreen. On return, resume unless the keyboard has the
+    // mascot hidden (that effect owns the paused state then).
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopPin();
+        stopReverse();
+        v.pause();
+      } else if (!hiddenRef.current) {
+        startPin();
+        if (beatRef.current === "sit-reverse") beatRef.current = "sit-forward";
+        safePlay(v);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     const startReverse = () => {
       // Browsers do not support negative playbackRate — step currentTime
@@ -147,7 +191,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
         if (t <= SIT[0]) {
           v.currentTime = SIT[0];
           beatRef.current = "sit-forward";
-          void v.play();
+          safePlay(v);
           return;
         }
         v.currentTime = t;
@@ -159,7 +203,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     const backToSleep = () => {
       beatRef.current = "sleep";
       v.currentTime = SLEEP[0];
-      void v.play();
+      safePlay(v);
     };
 
     const onTime = () => {
@@ -193,16 +237,37 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // Start asleep
     beatRef.current = "sleep";
     v.currentTime = SLEEP[0];
-    void v.play();
+    safePlay(v);
 
     return () => {
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("ended", onEnded);
+      document.removeEventListener("visibilitychange", onVisibility);
       stopReverse();
-      if (pinRaf.current !== null) cancelAnimationFrame(pinRaf.current);
+      stopPin();
+      startPinRef.current = null;
+      stopPinRef.current = null;
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
   }, []);
+
+  // Keyboard open: fade handled by the .mascot-hidden class; here the video
+  // and the offset loop pause so nothing animates while invisible. On
+  // restore, a mid-reverse beat resumes forward — the ping-pong picks the
+  // reverse leg up again on its own.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || reducedMotion.current) return;
+    if (hidden) {
+      stopPinRef.current?.();
+      stopReverse();
+      v.pause();
+    } else if (!document.hidden) {
+      startPinRef.current?.();
+      if (beatRef.current === "sit-reverse") beatRef.current = "sit-forward";
+      safePlay(v);
+    }
+  }, [hidden]);
 
   // External wake triggers
   const firstSignal = useRef(true);
@@ -235,7 +300,7 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // controls stay usable under the paws; the wake hit-area below stops
     // exactly at the bar's top edge (the video overlaps the bar by
     // --mascot-w * 0.325).
-    <div className="mascot select-none">
+    <div className={`mascot select-none ${hidden ? "mascot-hidden" : ""}`}>
       {/* WebM with a real alpha channel is the only source — deliberately
           no MP4 fallback: an opaque fallback painting a white box would
           hide a broken WebM reference; a 404 fails loudly instead. */}

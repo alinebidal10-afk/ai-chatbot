@@ -130,7 +130,7 @@ export default function Composer({
           disabled={busy}
           aria-label="Attach an image"
           title="Attach an image"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink hover:bg-cat-highlight/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline disabled:opacity-50"
+          className="touch-target flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-ink hover:bg-cat-highlight/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline disabled:opacity-50"
         >
           <Plus size={20} strokeWidth={1.75} />
         </button>
@@ -160,7 +160,9 @@ export default function Composer({
           rows={1}
           placeholder="Message the assistant…"
           aria-label="Message"
-          className="h-6 flex-1 resize-none self-center bg-transparent text-[15px] leading-6 text-ink outline-none placeholder:text-ink/40"
+          // 16px, not 15px: anything smaller makes iOS Safari zoom the whole
+          // page when the input is focused, which breaks the layout.
+          className="h-6 flex-1 resize-none self-center bg-transparent text-[16px] leading-6 text-ink outline-none placeholder:text-ink/40"
         />
 
         <ModelPicker value={modelId} onChange={onModelChange} disabled={busy} />
@@ -170,7 +172,7 @@ export default function Composer({
             type="button"
             onClick={onStop}
             aria-label="Stop generating"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cat-highlight text-ink hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline"
+            className="touch-target flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cat-highlight text-ink hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline"
           >
             <Square size={16} strokeWidth={1.75} fill="currentColor" />
           </button>
@@ -180,7 +182,7 @@ export default function Composer({
             onClick={send}
             disabled={!canSend}
             aria-label="Send message"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cat-highlight text-ink hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink disabled:bg-transparent disabled:opacity-40"
+            className="touch-target flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cat-highlight text-ink hover:brightness-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink disabled:bg-transparent disabled:opacity-40"
           >
             <SendHorizontal size={18} strokeWidth={1.75} />
           </button>

@@ -22,7 +22,7 @@ interface SidebarProps {
 }
 
 const actionRowClass =
-  "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-ink hover:bg-cat-highlight/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink";
+  "touch-target flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-ink hover:bg-cat-highlight/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink";
 
 export default function Sidebar({
   open,
@@ -71,11 +71,11 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`${open ? "sidebar-open" : ""} shrink-0 bg-cat-green max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-30 max-lg:w-72 max-lg:transition-transform max-lg:duration-[240ms] max-lg:ease-out ${open ? "max-lg:translate-x-0" : "max-lg:-translate-x-full"} lg:overflow-hidden lg:transition-[width] lg:duration-[240ms] lg:ease-out ${open ? "lg:w-72" : "lg:w-0"}`}
+      className={`${open ? "sidebar-open" : ""} shrink-0 bg-cat-green max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-30 max-lg:w-[min(85vw,20rem)] max-lg:transition-transform max-lg:duration-[240ms] max-lg:ease-out ${open ? "max-lg:translate-x-0" : "max-lg:-translate-x-full"} lg:overflow-hidden lg:transition-[width] lg:duration-[240ms] lg:ease-out ${open ? "lg:w-72" : "lg:w-0"}`}
       aria-label="Conversations"
       aria-hidden={!open}
     >
-      <div className="flex h-full w-72 flex-col p-3">
+      <div className="flex h-full w-full flex-col p-3 lg:w-72">
         <button type="button" onClick={onNewChat} className={actionRowClass}>
           <MessageSquarePlus size={16} strokeWidth={1.75} />
           New chat
@@ -207,7 +207,7 @@ export default function Sidebar({
                   setEditingId(c.id);
                   setDraft(c.title);
                 }}
-                className="hidden shrink-0 rounded p-1 text-ink/70 hover:bg-white/40 hover:text-ink group-hover:block"
+                className="row-action hidden shrink-0 rounded p-1 text-ink/70 hover:bg-white/40 hover:text-ink group-hover:block"
               >
                 <Pencil size={14} strokeWidth={1.75} />
               </button>
@@ -231,7 +231,7 @@ export default function Sidebar({
                   aria-label={`Delete "${c.title}"`}
                   title="Delete"
                   onClick={() => setConfirmDeleteId(c.id)}
-                  className="hidden shrink-0 rounded p-1 text-ink/70 hover:bg-white/40 hover:text-ink group-hover:block"
+                  className="row-action hidden shrink-0 rounded p-1 text-ink/70 hover:bg-white/40 hover:text-ink group-hover:block"
                 >
                   <Trash2 size={14} strokeWidth={1.75} />
                 </button>

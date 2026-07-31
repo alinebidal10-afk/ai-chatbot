@@ -50,7 +50,7 @@ export default function MessageList({
   );
 
   return (
-    <div className="absolute inset-0 overflow-y-auto">
+    <div className="absolute inset-0 touch-pan-y overflow-y-auto overscroll-contain">
       <div className="mx-auto max-w-3xl space-y-4 px-4 pt-16 md:px-6">
         {visible.map((m) => (
           <div
@@ -58,7 +58,7 @@ export default function MessageList({
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] ${
+              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] md:max-w-[80%] ${
                 m.role === "user"
                   ? "rounded-br-md border border-cat-outline/30 bg-cat-highlight text-ink"
                   : "rounded-bl-md border border-cat-outline/20 bg-white/85 text-ink"
@@ -88,7 +88,7 @@ export default function MessageList({
 
         {streamingText !== null && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-2xl rounded-bl-md border border-cat-outline/20 bg-white/85 px-4 py-2.5 text-[15px] text-ink">
+            <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-cat-outline/20 bg-white/85 px-4 py-2.5 text-[15px] text-ink md:max-w-[80%]">
               {streamingText.length > 0 ? (
                 <Markdown text={streamingText} />
               ) : (
@@ -112,7 +112,7 @@ export default function MessageList({
 
         {error && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-2xl border border-red-800/30 bg-red-50 px-4 py-2.5 text-sm text-red-900">
+            <div className="max-w-[85%] rounded-2xl border border-red-800/30 bg-red-50 px-4 py-2.5 text-sm text-red-900 md:max-w-[80%]">
               {error}
             </div>
           </div>
@@ -121,7 +121,10 @@ export default function MessageList({
         {/* Clearance for the docked bar (56px + 24px margin) plus the
             mascot reservation above it (--mascot-w * 0.6), so the last
             message never slides underneath either. */}
-        <div ref={bottomRef} className="h-[calc(80px+var(--mascot-w)*0.6)]" />
+        <div
+          ref={bottomRef}
+          className="h-[calc(80px+var(--mascot-w)*0.6+env(safe-area-inset-bottom,0px))]"
+        />
       </div>
     </div>
   );

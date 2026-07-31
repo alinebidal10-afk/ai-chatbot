@@ -29,9 +29,38 @@ body {
   font-family: var(--font-cause), system-ui, sans-serif;
 }
 
-/* Every mascot measurement derives from this one width. */
+/* Every mascot measurement derives from this one width. The overrides live
+   on :root, not on .mascot, because the bar's empty-state position, the
+   greeting clearance and the message-list spacer are all derived from the
+   same variable and must shrink with the cat. --bar-inset is the bar's own
+   distance from the screen edge (the px-4 on its container). */
 :root {
   --mascot-w: 400px;
+  --bar-inset: 16px;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --mascot-w: 280px;
+  }
+}
+
+@media (max-width: 430px) {
+  :root {
+    --mascot-w: 220px;
+  }
+}
+
+@media (max-width: 360px) {
+  :root {
+    --mascot-w: 180px;
+  }
+}
+
+@media (max-height: 640px) {
+  :root {
+    --mascot-w: 180px;
+  }
 }
 
 /* Anchored to the bar wrapper: the tail base (31.05% of frame width) lines
@@ -49,6 +78,22 @@ body {
   bottom: calc(100% - var(--mascot-w) * 0.325);
   z-index: 2;
   pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+/* While the on-screen keyboard is open there is no room for the cat — it
+   fades out entirely rather than sliding around over the keyboard. */
+.mascot.mascot-hidden {
+  opacity: 0;
+}
+
+/* On a phone the bar is nearly full width, so the tail-base offset would
+   push the cat off the left edge of the screen. Clamp it to the bar's own
+   inset: the tail then starts at the screen edge instead of off it. */
+@media (max-width: 768px) {
+  .mascot {
+    left: max(calc(var(--mascot-w) * -0.3105), calc(-1 * var(--bar-inset)));
+  }
 }
 
 /* The per-frame vertical offset (mascot-offsets.json lookup in Mascot.tsx)
@@ -83,6 +128,39 @@ body {
 @media (max-height: 560px) {
   .greeting {
     display: none;
+  }
+}
+
+@media (max-width: 430px) {
+  .greeting {
+    font-size: 28px;
+  }
+}
+
+/* Touch devices: hover-only affordances don't exist, and every control
+   needs a 44x44px hit area. .row-action makes the per-conversation rename
+   and delete buttons always visible and extends their hit area with a
+   pseudo-element so the rows don't have to grow; .touch-target enforces
+   the minimum on standalone buttons. */
+@media (pointer: coarse) {
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .row-action {
+    display: block;
+    position: relative;
+  }
+
+  .row-action::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
   }
 }
 

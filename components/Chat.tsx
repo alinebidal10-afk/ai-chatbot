@@ -47,6 +47,37 @@ export default function Chat() {
 
   const wake = useCallback(() => setAwakeSignal((n) => n + 1), []);
 
+  // On-screen keyboard handling (touch devices only): the visual viewport
+  // shrinks while the layout viewport does not, so a bottom-docked bar
+  // would vanish behind the keyboard. Track the covered height and lift
+  // the bar by exactly that much; the mascot hides entirely meanwhile.
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !window.matchMedia("(pointer: coarse)").matches) return;
+    const update = () => {
+      const covered = window.innerHeight - (vv.height + vv.offsetTop);
+      // Small deltas are browser chrome collapsing, not a keyboard.
+      setKeyboardInset(covered > 100 ? covered : 0);
+    };
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+  const keyboardOpen = keyboardInset > 0;
+
+  // On mobile the sidebar overlays the chat, so leaving it open after a
+  // selection would land the user on a conversation they cannot see.
+  const closeSidebarOnMobile = useCallback(() => {
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      setSidebarOpen(false);
+      window.localStorage.setItem(SIDEBAR_KEY, "0");
+    }
+  }, []);
+
   const refreshConversations = useCallback(async () => {
     try {
       const res = await fetch("/api/conversations");
@@ -279,12 +310,28 @@ export default function Chat() {
         open={sidebarOpen}
         conversations={conversations}
         activeId={activeId}
-        onSelect={(id) => void openConversation(id)}
-        onNewChat={newChat}
+        onSelect={(id) => {
+          void openConversation(id);
+          closeSidebarOnMobile();
+        }}
+        onNewChat={() => {
+          newChat();
+          closeSidebarOnMobile();
+        }}
         onRename={(id, t) => void renameConversation(id, t)}
         onDelete={(id) => void deleteConversation(id)}
         onDeleteAll={() => void deleteAll()}
       />
+
+      {/* Scrim behind the overlaying sidebar on small screens; tapping it
+          closes the sidebar. */}
+      {sidebarOpen && (
+        <div
+          aria-hidden="true"
+          onClick={toggleSidebar}
+          className="fixed inset-0 z-20 bg-ink/30 lg:hidden"
+        />
+      )}
 
       <main className="relative min-w-0 flex-1">
         {/* Floating controls, no panel */}
@@ -294,7 +341,7 @@ export default function Chat() {
             onClick={toggleSidebar}
             aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-ink hover:bg-cat-highlight/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline"
+            className="touch-target flex h-9 w-9 items-center justify-center rounded-full text-ink hover:bg-cat-highlight/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline"
           >
             <Menu size={20} strokeWidth={1.75} />
           </button>
@@ -318,17 +365,23 @@ export default function Chat() {
           className="absolute inset-x-0 px-4 transition-[top] duration-500 ease-out"
           style={{
             // Empty state: the greeting (48px) + the mascot clearance
-            // (--mascot-w * 0.6) + the 56px bar centred as one group.
+            // (--mascot-w * 0.6) + the 56px bar centred as one group. The
+            // docked position clears the home indicator on notched phones;
+            // while the on-screen keyboard is open the whole group lifts by
+            // the covered height so the bar stays visible above it.
             top: active
-              ? "calc(100% - 80px)"
+              ? "calc(100% - 80px - env(safe-area-inset-bottom, 0px))"
               : "calc(50% + var(--mascot-w) * 0.3 - 4px)",
+            transform: keyboardOpen
+              ? `translateY(-${keyboardInset}px)`
+              : undefined,
           }}
         >
           <div className="relative mx-auto max-w-[720px]">
             <p
               aria-hidden={active}
               className={`greeting pointer-events-none absolute bottom-[calc(100%+var(--mascot-w)*0.6)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${
-                active ? "opacity-0" : "opacity-100"
+                active || keyboardOpen ? "opacity-0" : "opacity-100"
               }`}
             >
               What can I help with?
@@ -348,6 +401,7 @@ export default function Chat() {
               awakeSignal={awakeSignal}
               resetSignal={mascotResetSignal}
               busy={busy}
+              hidden={keyboardOpen}
             />
           </div>
         </div>
