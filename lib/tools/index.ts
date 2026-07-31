@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { fetchNews } from "./news";
 import { readLinkedInProfile } from "./linkedin";
 import { summarizeYoutube } from "./youtube";
+import { getWeather } from "./weather";
 
 /** Every tool resolves to this — no tool ever throws. */
 export type ToolResult =
@@ -44,6 +45,21 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_weather",
+    description:
+      "Get current weather and a three-day outlook for a place, via Open-Meteo. Call this whenever the user asks about the weather. Pass the place name as the user said it; the tool geocodes it and reports which resolved place the reading is for. If the user gave no location at all, ask them instead of guessing a city.",
+    input_schema: {
+      type: "object",
+      properties: {
+        location: {
+          type: "string",
+          description: "Place name as the user said it (e.g. 'SF', 'Springfield', 'Kadıköy').",
+        },
+      },
+      required: ["location"],
+    },
+  },
+  {
     name: "summarize_youtube",
     description:
       "Fetch metadata and the transcript (when available) of a YouTube video so it can be summarized accurately. Call this whenever the user shares a YouTube link or asks to summarize a video.",
@@ -66,6 +82,8 @@ export function toolStatusLabel(name: string): string {
       return "Looking up profile…";
     case "summarize_youtube":
       return "Reading video transcript…";
+    case "get_weather":
+      return "Checking the weather…";
     default:
       return "Working…";
   }
@@ -91,6 +109,8 @@ export async function runTool(
         });
       case "summarize_youtube":
         return await summarizeYoutube(String(args.url ?? ""));
+      case "get_weather":
+        return await getWeather(String(args.location ?? ""));
       default:
         return { ok: false, reason: `Unknown tool: ${name}` };
     }
