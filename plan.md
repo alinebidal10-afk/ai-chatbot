@@ -39,6 +39,10 @@ webm, video saatine kilitli kare-başına ofset tablosuyla bar'a oturuyor.
 - [x] Hava durumu: geocode + 3 günlük tahmin, WMO kod çevirisi, SF/NYC kısaltmaları
 - [x] Vercel production deploy (li-flows/ai-chatbot) + GitHub reposu
 - [x] Prisma libSQL adaptörü — yerel dosya DB'si ile Turso'ya tek kod yolu
+- [x] Mobil uyum (değişiklik istemi 12): safe-area + dvh, klavye açılınca
+      visualViewport ile bar kaldırma ve maskot gizleme, duyarlı maskot
+      boyutları (280/220/180), scrim'li sidebar + seçimde otomatik kapanma,
+      44px dokunma hedefleri, 16px giriş yazısı (iOS zoom engeli)
 
 ## Açık işler (öncelik sırasıyla)
 
