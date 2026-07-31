@@ -94,7 +94,13 @@ export async function generateTitle(
       messages: [{ role: "user", content: firstUserText.slice(0, 2000) }],
     });
     const block = response.content.find((b) => b.type === "text");
-    const title = block && block.type === "text" ? block.text.trim() : null;
+    let title = block && block.type === "text" ? block.text.trim() : null;
+    if (!title) return null;
+    // The model does not always honour "no quotes, no trailing punctuation".
+    title = title
+      .replace(/^["'«„”]+|["'»“”]+$/g, "")
+      .replace(/[.!?…:;,]+$/g, "")
+      .trim();
     return title ? title.slice(0, 80) : null;
   } catch {
     return null;
