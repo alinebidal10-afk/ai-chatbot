@@ -8,8 +8,10 @@ Anthropic API üzerine kurulu, akış (SSE) destekli sohbet uygulaması. Next.js
 TypeScript + Tailwind v4; Prisma 7 + libSQL (yerelde `dev.db`, production'da
 Turso); model erişimi Claude Opus 5 / Sonnet 5 / Haiku 4.5. Dört yerleşik araç:
 haber (RSS), LinkedIn profili (Scrapin + Anthropic web search), YouTube özeti
-(youtubei.js + parçalı özetleme), hava durumu (Open-Meteo). Maskot: alfa kanallı
-webm, video saatine kilitli kare-başına ofset tablosuyla bar'a oturuyor.
+(youtubei.js + parçalı özetleme), hava durumu (Open-Meteo). Maskot: opak MP4'ten
+canvas üzerinde beyaz arka planı ayıklanarak çiziliyor (iOS WebKit VP9 alfa
+desteklemediği için tek kod yolu); video saatine kilitli kare-başına ofset
+tablosuyla bar'a oturuyor.
 
 - Canlı site: https://ai-chatbot-li-flows.vercel.app
 - Repo: https://github.com/alinebidal10-afk/ai-chatbot

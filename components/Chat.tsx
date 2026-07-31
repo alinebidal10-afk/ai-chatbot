@@ -358,9 +358,7 @@ export default function Chat() {
         )}
 
         {/* The input bar (with the cat on its top edge). Positioned after
-            the message list in the DOM so it paints above it — deliberately
-            NO z-index anywhere in this subtree, or the mascot's multiply
-            blend would be isolated and its white box would come back. */}
+            the message list in the DOM so it paints above it. */}
         <div
           className="absolute inset-x-0 px-4 transition-[top] duration-500 ease-out"
           style={{
@@ -394,9 +392,8 @@ export default function Chat() {
               onStop={stop}
               onFocusInput={wake}
             />
-            {/* After the Composer in the DOM: keeps the paws in front of the
-                bar even in the MP4-fallback case, where the multiply blend
-                forces the z-index off (see globals.css). */}
+            {/* After the Composer in the DOM so the paws paint in front of
+                the bar. */}
             <Mascot
               awakeSignal={awakeSignal}
               resetSignal={mascotResetSignal}

@@ -41,25 +41,25 @@ body {
 
 @media (max-width: 768px) {
   :root {
-    --mascot-w: 280px;
+    --mascot-w: 240px;
   }
 }
 
 @media (max-width: 430px) {
   :root {
-    --mascot-w: 220px;
+    --mascot-w: 180px;
   }
 }
 
 @media (max-width: 360px) {
   :root {
-    --mascot-w: 180px;
+    --mascot-w: 150px;
   }
 }
 
 @media (max-height: 640px) {
   :root {
-    --mascot-w: 180px;
+    --mascot-w: 150px;
   }
 }
 
@@ -97,24 +97,20 @@ body {
 }
 
 /* The per-frame vertical offset (mascot-offsets.json lookup in Mascot.tsx)
-   is applied to this wrapper, NEVER to the <video> element: a transform on
-   a <video> promotes it to its own compositing layer and Chrome paints the
-   video's own frame instead of compositing its alpha against the page —
-   that is the pale rectangle. The percentage resolves against the
-   wrapper's height, which equals the video's. No transition here either:
-   the offset is keyed to the video clock frame by frame. */
+   is applied to this wrapper, NEVER to the canvas element itself: a
+   transform on the drawing surface promotes it to its own compositing
+   layer. The percentage resolves against the wrapper's height, which
+   equals the canvas's. No transition here either: the offset is keyed to
+   the video clock frame by frame. */
 .mascot-shift {
   width: 100%;
 }
 
-.mascot video {
+/* The cat is drawn onto this canvas by the keying loop in Mascot.tsx; the
+   source <video> is a hidden 1px decode surface and is never displayed. */
+.mascot canvas {
   width: 100%;
   display: block;
-  /* Zeroes the WebM's residual VP9 alpha floor (see the #mascot-alpha SVG
-     in layout.tsx). The filter creates a stacking context on the video —
-     harmless, but one more reason no mix-blend-mode may exist anywhere
-     near the mascot. */
-  filter: url(#mascot-alpha);
 }
 
 /* Tight viewports: the greeting shrinks first, then disappears — the
