@@ -1,6 +1,7 @@
 import { Innertube } from "youtubei.js";
 import { getClient } from "@/lib/providers/anthropic";
 import { getPotSession } from "./youtube-pot";
+import { getTranscriptProvider } from "./youtube-transcript-provider";
 import type { ToolResult } from "./index";
 
 /**
@@ -318,7 +319,33 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
       accessBlocked = true;
     }
 
-    if (accessBlocked) {
+    // Transcript provider: the only route to caption text from a server,
+    // since YouTube refuses caption access from datacenter IPs even to
+    // valid PO-token sessions. Tried first when the direct path is blocked
+    // or produced nothing.
+    let transcriptSource: string | null = null;
+    let transcriptUnavailable = false;
+    if (!transcript) {
+      const provider = getTranscriptProvider();
+      if (provider) {
+        // No language preference: the provider returns one of the video's
+        // own tracks, and asking for a specific language would silently
+        // hand back a machine translation of it. The track's language is
+        // reported to the model instead.
+        const got = await provider.fetch({ url });
+        if (got.ok) {
+          transcript = got.result.text;
+          transcriptLanguage = got.result.language;
+          transcriptSource = got.result.source;
+          accessBlocked = false;
+        } else if (got.unavailable) {
+          // The provider positively determined there is no transcript.
+          transcriptUnavailable = true;
+        }
+      }
+    }
+
+    if (accessBlocked && !transcript) {
       // Bot-walled network: run a BotGuard attestation and retry with a
       // PO-token session — the sanctioned way past "confirm you're not a
       // bot" for automated WEB-client requests.
@@ -416,9 +443,11 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
         data: {
           ...base,
           transcriptAvailable: false,
-          note: accessBlocked
-            ? "The transcript could not be retrieved: YouTube refused automated caption access from this server (bot check or lookup failure). Captions may well exist on the video. The summary must be based only on the title, channel and description, must say plainly that the transcript was not accessible, and must never fabricate content."
-            : "No transcript was available (captions disabled or missing for this language). The summary must be based only on the title, channel and description, and must say so plainly. Never fabricate content.",
+          note: transcriptUnavailable
+            ? "No transcript exists for this video (captions are disabled or missing). The summary must be based only on the title, channel and description, and must say so plainly. Never fabricate content."
+            : accessBlocked
+              ? "The transcript could not be retrieved: YouTube refused automated caption access from this server (bot check or lookup failure). Captions may well exist on the video. The summary must be based only on the title, channel and description, must say plainly that the transcript was not accessible, and must never fabricate content."
+              : "No transcript was available (captions disabled or missing for this language). The summary must be based only on the title, channel and description, and must say so plainly. Never fabricate content.",
           description,
         },
       };
@@ -431,6 +460,7 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
           ...base,
           transcriptAvailable: true,
           transcriptLanguage,
+          transcriptSource,
           transcript,
         },
       };
@@ -445,6 +475,7 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
           ...base,
           transcriptAvailable: true,
           transcriptLanguage,
+          transcriptSource,
           transcriptCondensed: true,
           transcriptChunkCount: condensed.chunkCount,
           note: `The transcript (${transcript.length} chars) was condensed chunk-by-chunk (${condensed.chunkCount} portions, whole video covered).`,
@@ -461,6 +492,7 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
         ...base,
         transcriptAvailable: true,
         transcriptLanguage,
+        transcriptSource,
         transcriptCondensed: false,
         note: "Chunk summarisation was unavailable; this is the FULL transcript.",
         transcript,
