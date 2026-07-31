@@ -1,5 +1,6 @@
 import { Innertube } from "youtubei.js";
 import { getClient } from "@/lib/providers/anthropic";
+import { getPotSession } from "./youtube-pot";
 import type { ToolResult } from "./index";
 
 /**
@@ -107,28 +108,31 @@ async function fetchTranscriptViaAndroid(
     }).then((r) => (r.ok ? r.text() : ""));
     if (!body) return null;
 
-    let text = "";
-    try {
-      const doc = JSON.parse(body) as {
-        events?: { segs?: { utf8?: string }[] }[];
-      };
-      text = (doc.events ?? [])
-        .flatMap((e) => e.segs ?? [])
-        .map((s) => s.utf8 ?? "")
-        .join("");
-    } catch {
-      // timedtext XML: <text ...>…</text> (srv1) or <p ...>…</p> (format 3)
-      text = [
-        ...body.matchAll(/<(?:text|p)\b[^>]*>([\s\S]*?)<\/(?:text|p)>/g),
-      ]
-        .map((m) => decodeEntities(m[1].replace(/<[^>]+>/g, " ")))
-        .join(" ");
-    }
-    text = text.replace(/\s+/g, " ").trim();
+    const text = parseCaptionBody(body);
     return text ? { text, language: track.languageCode ?? null } : null;
   } catch {
     return null;
   }
+}
+
+/** Caption payload to plain text: json3 first, timedtext XML as fallback. */
+function parseCaptionBody(body: string): string {
+  let text = "";
+  try {
+    const doc = JSON.parse(body) as {
+      events?: { segs?: { utf8?: string }[] }[];
+    };
+    text = (doc.events ?? [])
+      .flatMap((e) => e.segs ?? [])
+      .map((s) => s.utf8 ?? "")
+      .join("");
+  } catch {
+    // timedtext XML: <text ...>…</text> (srv1) or <p ...>…</p> (format 3)
+    text = [...body.matchAll(/<(?:text|p)\b[^>]*>([\s\S]*?)<\/(?:text|p)>/g)]
+      .map((m) => decodeEntities(m[1].replace(/<[^>]+>/g, " ")))
+      .join(" ");
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -312,6 +316,65 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
       // Innertube itself failed — caption state is unknown, so the note
       // below must say "could not be retrieved", not "captions disabled".
       accessBlocked = true;
+    }
+
+    if (accessBlocked) {
+      // Bot-walled network: run a BotGuard attestation and retry with a
+      // PO-token session — the sanctioned way past "confirm you're not a
+      // bot" for automated WEB-client requests.
+      const pot = await getPotSession();
+      if (pot) {
+        try {
+          const info = await pot.innertube.getInfo(videoId);
+          if (info.playability_status?.status !== "LOGIN_REQUIRED") {
+            accessBlocked = false;
+            title = info.basic_info.title ?? title;
+            channel = info.basic_info.author ?? channel;
+            durationSeconds = info.basic_info.duration ?? durationSeconds;
+            description =
+              info.basic_info.short_description?.slice(0, 1500) ?? description;
+
+            try {
+              const t = await info.getTranscript();
+              transcriptLanguage = t.selectedLanguage ?? null;
+              const segments =
+                t.transcript?.content?.body?.initial_segments ?? [];
+              const text = segments
+                .map((s) => ("snippet" in s ? (s.snippet?.text ?? "") : ""))
+                .join(" ")
+                .replace(/\s+/g, " ")
+                .trim();
+              transcript = text || null;
+            } catch {
+              transcript = null;
+            }
+            if (!transcript) {
+              // Caption URLs from this player response need a CONTENT-bound
+              // token appended, or they come back empty.
+              const tracks = info.captions?.caption_tracks ?? [];
+              const human = tracks.filter((t) => t.kind !== "asr");
+              const pool = human.length > 0 ? human : tracks;
+              const track =
+                pool.find((t) => t.language_code?.startsWith("en")) ?? pool[0];
+              if (track) {
+                const contentPot = await pot.mintContentToken(videoId);
+                const sep = track.base_url.includes("?") ? "&" : "?";
+                const body = await fetch(
+                  `${track.base_url}${sep}fmt=json3&pot=${contentPot}&c=WEB`,
+                  { signal: AbortSignal.timeout(10000) },
+                ).then((r) => (r.ok ? r.text() : ""));
+                const text = body ? parseCaptionBody(body) : "";
+                if (text) {
+                  transcript = text;
+                  transcriptLanguage = track.language_code ?? null;
+                }
+              }
+            }
+          }
+        } catch {
+          /* still blocked — the honest metadata path below handles it */
+        }
+      }
     }
 
     if (!title) {
