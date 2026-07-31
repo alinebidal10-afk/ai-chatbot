@@ -65,6 +65,11 @@ body {
 .mascot video {
   width: 100%;
   display: block;
+  /* Zeroes the WebM's residual VP9 alpha floor (see the #mascot-alpha SVG
+     in layout.tsx). The filter creates a stacking context on the video —
+     harmless, but one more reason no mix-blend-mode may exist anywhere
+     near the mascot. */
+  filter: url(#mascot-alpha);
 }
 
 /* Tight viewports: the greeting shrinks first, then disappears — the
