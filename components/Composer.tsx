@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, SendHorizontal, Square } from "lucide-react";
 import type { Attachment } from "@/lib/chat-types";
 import { getModelInfo } from "@/lib/models";
@@ -40,6 +40,25 @@ export default function Composer({
   const visionBlocked = attachments.length > 0 && !model.supportsVision;
   const canSend =
     !busy && !visionBlocked && (text.trim().length > 0 || attachments.length > 0);
+
+  // The textarea grows with its content and shrinks when text is deleted.
+  // Setting height to auto before reading scrollHeight is what makes the
+  // shrink work — without it the box only ever grows. Past max-height it
+  // stops growing and scrolls internally. Runs on every text change, which
+  // also covers paste, the cleared draft after send, and restored drafts.
+  const autoGrow = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = parseInt(getComputedStyle(el).maxHeight, 10);
+    const capped = el.scrollHeight > max;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+    el.style.overflowY = capped ? "auto" : "hidden";
+  }, []);
+
+  useEffect(() => {
+    autoGrow();
+  }, [text, autoGrow]);
 
   const addFiles = async (files: FileList | File[]) => {
     setAttachError(null);
@@ -119,8 +138,11 @@ export default function Composer({
         </div>
       )}
 
+      {/* min-h keeps the single-line state the same 56px pill; with more
+          lines the box grows and the 28px radius reads as a rounded
+          rectangle. Buttons anchor to the bottom edge. */}
       <div
-        className={`flex h-14 items-center gap-1.5 rounded-[28px] border border-cat-outline bg-white pl-2 pr-2 shadow-lg shadow-cat-outline/10 ${
+        className={`flex min-h-14 items-end gap-1.5 rounded-[28px] border border-cat-outline bg-white py-2 pl-2 pr-2 shadow-lg shadow-cat-outline/10 ${
           dragOver ? "ring-2 ring-cat-outline/50" : ""
         }`}
       >
@@ -153,6 +175,9 @@ export default function Composer({
           onFocus={onFocusInput}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
+              // On touch devices the return key must insert a newline —
+              // sending is the button only. Pointer capability, not UA.
+              if (window.matchMedia("(pointer: coarse)").matches) return;
               e.preventDefault();
               send();
             }
@@ -162,7 +187,7 @@ export default function Composer({
           aria-label="Message"
           // 16px, not 15px: anything smaller makes iOS Safari zoom the whole
           // page when the input is focused, which breaks the layout.
-          className="h-6 flex-1 resize-none self-center bg-transparent text-[16px] leading-6 text-ink outline-none placeholder:text-ink/40"
+          className="composer-input my-2 flex-1 resize-none overflow-y-hidden bg-transparent text-[16px] leading-[1.45] text-ink outline-none placeholder:text-ink/40"
         />
 
         <ModelPicker value={modelId} onChange={onModelChange} disabled={busy} />

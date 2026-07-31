@@ -49,6 +49,57 @@ export default function Chat() {
   const [awakeSignal, setAwakeSignal] = useState(0);
   const [mascotResetSignal, setMascotResetSignal] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const barWrapRef = useRef<HTMLDivElement>(null);
+
+  // The bar grows with the textarea. Its live height is written to --bar-h
+  // on <main> so the docked position and the message list's bottom padding
+  // both track it — no hardcoded padding anywhere.
+  useEffect(() => {
+    const bar = barWrapRef.current;
+    const main = mainRef.current;
+    if (!bar || !main) return;
+    const ro = new ResizeObserver(() => {
+      main.style.setProperty("--bar-h", `${bar.offsetHeight}px`);
+    });
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+
+  // Typewriter buffer: SSE deltas land several tokens at a time, so
+  // rendering each delta reads as chunks. Deltas fill pendingRef and a rAF
+  // loop drains them at a steady rate — at least one character per frame,
+  // proportionally faster when the buffer is deep so rendering never falls
+  // behind. State is set once per frame at most.
+  const pendingRef = useRef("");
+  const shownRef = useRef("");
+  const drainRaf = useRef<number | null>(null);
+
+  const stopDrain = useCallback((flush: boolean) => {
+    if (drainRaf.current !== null) {
+      cancelAnimationFrame(drainRaf.current);
+      drainRaf.current = null;
+    }
+    if (flush && pendingRef.current) {
+      shownRef.current += pendingRef.current;
+      pendingRef.current = "";
+      setStreamingText(shownRef.current);
+    }
+  }, []);
+
+  const startDrain = useCallback(() => {
+    if (drainRaf.current !== null) return;
+    const step = () => {
+      if (pendingRef.current.length > 0) {
+        const n = Math.max(1, Math.ceil(pendingRef.current.length / 12));
+        shownRef.current += pendingRef.current.slice(0, n);
+        pendingRef.current = pendingRef.current.slice(n);
+        setStreamingText(shownRef.current);
+      }
+      drainRaf.current = requestAnimationFrame(step);
+    };
+    drainRaf.current = requestAnimationFrame(step);
+  }, []);
 
   const wake = useCallback(() => setAwakeSignal((n) => n + 1), []);
 
@@ -187,8 +238,11 @@ export default function Chat() {
       ]);
       setBusy(true);
       setError(null);
+      pendingRef.current = "";
+      shownRef.current = "";
       setStreamingText("");
       setToolStatus(null);
+      startDrain();
       wake();
 
       const abort = new AbortController();
@@ -238,7 +292,7 @@ export default function Chat() {
               }
               case "text":
                 acc += event.text as string;
-                setStreamingText(acc);
+                pendingRef.current += event.text as string;
                 setToolStatus(null);
                 break;
               case "status":
@@ -278,6 +332,10 @@ export default function Chat() {
           );
         }
       } finally {
+        // Stream over (or stopped): flush whatever is still queued rather
+        // than typing it out — nobody waits on an animation after the
+        // answer is complete, and a stop keeps the partial text.
+        stopDrain(true);
         if (acc.trim()) {
           setMessages((prev) => [
             ...prev,
@@ -295,7 +353,7 @@ export default function Chat() {
         void refreshConversations();
       }
     },
-    [activeId, modelId, refreshConversations, wake],
+    [activeId, modelId, refreshConversations, wake, startDrain, stopDrain],
   );
 
   const stop = useCallback(() => {
@@ -353,7 +411,7 @@ export default function Chat() {
         />
       )}
 
-      <main className="relative min-w-0 flex-1">
+      <main ref={mainRef} className="relative min-w-0 flex-1">
         {/* Floating controls, no panel */}
         <div className="absolute left-4 top-4 z-20 flex items-center">
           <button
@@ -390,12 +448,22 @@ export default function Chat() {
             top: active
               ? "calc(100% - 80px - env(safe-area-inset-bottom, 0px))"
               : "calc(50% + var(--mascot-w) * 0.3 - 4px)",
-            transform: keyboardOpen
-              ? `translateY(-${keyboardInset}px)`
-              : undefined,
+            // Growth direction: `top` positions the single-line (56px) bar,
+            // so in the empty state extra lines grow downward with the top
+            // edge fixed. Docked, the bottom edge must stay at its 24px
+            // margin instead, so the transform lifts the group by exactly
+            // the extra height — instantly, outside the 500ms top
+            // transition, and the mascot (inside this group, anchored to
+            // the bar's top edge) rides up with it.
+            transform:
+              active || keyboardOpen
+                ? `translateY(calc(${keyboardOpen ? -keyboardInset : 0}px + ${
+                    active ? "(56px - var(--bar-h, 56px))" : "0px"
+                  }))`
+                : undefined,
           }}
         >
-          <div className="relative mx-auto max-w-[720px]">
+          <div ref={barWrapRef} className="relative mx-auto max-w-[720px]">
             <p
               aria-hidden={active}
               className={`greeting pointer-events-none absolute bottom-[calc(100%+var(--mascot-w)*0.6)] left-0 right-0 whitespace-nowrap text-center text-[40px] font-normal leading-[48px] tracking-[-0.02em] text-ink transition-opacity duration-300 ${

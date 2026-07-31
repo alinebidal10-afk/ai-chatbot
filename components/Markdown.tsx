@@ -55,7 +55,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   return nodes;
 }
 
-export default function Markdown({ text }: { text: string }) {
+function Markdown({ text }: { text: string }) {
   const blocks: React.ReactNode[] = [];
   const lines = text.split("\n");
   let list: string[] = [];
@@ -101,3 +101,7 @@ export default function Markdown({ text }: { text: string }) {
 
   return <div className="space-y-0.5 leading-relaxed">{blocks}</div>;
 }
+
+// Memoised so finished messages are not re-parsed and re-rendered on every
+// frame while a new one streams beneath them.
+export default React.memo(Markdown);

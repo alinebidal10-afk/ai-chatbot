@@ -6,6 +6,8 @@ import { generateTitle } from "@/lib/providers/anthropic";
 import { TOOL_DEFINITIONS, runTool, toolStatusLabel } from "@/lib/tools";
 
 export const runtime = "nodejs";
+// Never statically optimised — every response is a live SSE stream.
+export const dynamic = "force-dynamic";
 
 const MAX_TOOL_ROUNDS = 6;
 
@@ -215,6 +217,9 @@ export async function POST(request: NextRequest) {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
+      // Stops nginx-style proxies from holding chunks and releasing them
+      // in lumps, which looks identical to client-side jank.
+      "x-accel-buffering": "no",
     },
   });
 }

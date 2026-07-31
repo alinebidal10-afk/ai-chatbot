@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowDown } from "lucide-react";
 import type { ChatMessage, ImageBlock, TextBlock } from "@/lib/chat-types";
 import Markdown from "./Markdown";
 
@@ -39,10 +40,27 @@ export default function MessageList({
   error,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Pinned to the bottom while streaming — but the moment the user scrolls
+  // up, stop following and offer a jump-to-latest affordance instead.
+  // Following resumes only when they scroll back down themselves.
+  const [following, setFollowing] = useState(true);
+
+  const onScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setFollowing(distance < 60);
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, streamingText, toolStatus, error]);
+    if (following) bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, streamingText, toolStatus, error, following]);
+
+  const jumpToLatest = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    setFollowing(true);
+  }, []);
 
   // Hide pure tool-plumbing messages (tool_use-only / tool_result-only)
   const visible = messages.filter(
@@ -50,7 +68,11 @@ export default function MessageList({
   );
 
   return (
-    <div className="absolute inset-0 touch-pan-y overflow-y-auto overscroll-contain">
+    <div
+      ref={scrollerRef}
+      onScroll={onScroll}
+      className="absolute inset-0 touch-pan-y overflow-y-auto overscroll-contain"
+    >
       <div className="mx-auto max-w-3xl space-y-4 px-4 pt-16 md:px-6">
         {visible.map((m) => (
           <div
@@ -90,7 +112,13 @@ export default function MessageList({
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-cat-outline/20 bg-white/85 px-4 py-2.5 text-[15px] text-ink md:max-w-[80%]">
               {streamingText.length > 0 ? (
-                <Markdown text={streamingText} />
+                // Plain text with preserved line breaks while streaming —
+                // re-parsing markdown every frame is the jitter people
+                // mistake for network lag. Parsed once on completion, when
+                // the message joins the list above.
+                <p className="whitespace-pre-wrap leading-relaxed">
+                  {streamingText}
+                </p>
               ) : (
                 <span className="text-ink/50">…</span>
               )}
@@ -118,14 +146,28 @@ export default function MessageList({
           </div>
         )}
 
-        {/* Clearance for the docked bar (56px + 24px margin) plus the
-            mascot reservation above it (--mascot-w * 0.6), so the last
+        {/* Clearance for the docked bar (live height via --bar-h, written
+            by a ResizeObserver as the composer grows, + 24px margin) plus
+            the mascot reservation above it (--mascot-w * 0.6), so the last
             message never slides underneath either. */}
         <div
           ref={bottomRef}
-          className="h-[calc(80px+var(--mascot-w)*0.6+env(safe-area-inset-bottom,0px))]"
+          className="h-[calc(var(--bar-h,56px)+24px+var(--mascot-w)*0.6+env(safe-area-inset-bottom,0px))]"
         />
       </div>
+
+      {/* Shown when the user has scrolled away from the bottom; following
+          resumes when they return there (by this button or by hand). */}
+      {!following && (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          aria-label="Jump to latest"
+          className="touch-target absolute bottom-[calc(var(--bar-h,56px)+48px+env(safe-area-inset-bottom,0px))] left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-cat-outline/40 bg-white text-ink shadow-md hover:bg-cat-highlight/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cat-outline"
+        >
+          <ArrowDown size={18} strokeWidth={1.75} />
+        </button>
+      )}
     </div>
   );
 }

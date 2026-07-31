@@ -160,6 +160,18 @@ body {
   }
 }
 
+/* The composer textarea grows with its content up to this cap, then
+   scrolls internally (overflow-y switched to auto in JS at the cap). */
+.composer-input {
+  max-height: 200px;
+}
+
+@media (max-width: 430px) {
+  .composer-input {
+    max-height: 40dvh;
+  }
+}
+
 /* Sidebar rows appear in sequence as it opens (delay set inline per row). */
 .sidebar-row {
   opacity: 0;
