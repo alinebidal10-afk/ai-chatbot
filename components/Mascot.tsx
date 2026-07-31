@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /** Beat ranges in the mascot video (seconds). WAKE starts at the frame
  *  where the cat actually begins to move — frames 62-85 of the original
@@ -27,6 +27,7 @@ interface MascotProps {
 
 export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const shiftRef = useRef<HTMLDivElement>(null);
   const beatRef = useRef<Beat>("sleep");
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reverseRaf = useRef<number | null>(null);
@@ -35,10 +36,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
   const reducedMotion = useRef(false);
   const busyRef = useRef(busy);
   busyRef.current = busy;
-
-  // WebM with alpha is the primary source; only the MP4 fallback needs the
-  // multiply blend to hide its white background.
-  const [mp4Fallback, setMp4Fallback] = useState(false);
 
   const stopReverse = () => {
     if (reverseRaf.current !== null) cancelAnimationFrame(reverseRaf.current);
@@ -101,26 +98,19 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
       "(prefers-reduced-motion: reduce)",
     ).matches;
 
-    // Multiply is needed only when the browser fell back to the MP4 source.
-    const onLoadedData = () => {
-      setMp4Fallback(v.currentSrc.endsWith(".mp4"));
-    };
-    v.addEventListener("loadeddata", onLoadedData);
-    if (v.readyState >= 2 && v.currentSrc) onLoadedData();
-
     if (reducedMotion.current) {
       // No animation: hold a single sleeping frame (offset there is ~0).
       v.pause();
       v.currentTime = 1.0;
-      return () => {
-        v.removeEventListener("loadeddata", onLoadedData);
-      };
+      return;
     }
 
     // Per-frame vertical offsets (percent) keyed to the video clock keep
     // the cat's contact line pinned to the bar in every beat and in both
     // directions of the SIT ping-pong. No CSS transition could do this:
-    // the video's motion is a step, not a curve.
+    // the video's motion is a step, not a curve. The offset goes on the
+    // .mascot-shift wrapper — transforming the <video> itself promotes it
+    // to its own compositing layer and paints a pale rectangle.
     void fetch("/mascot-offsets.json")
       .then((r) => (r.ok ? r.json() : null))
       .then((data: number[] | null) => {
@@ -132,12 +122,13 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
 
     const pin = () => {
       const offsets = offsetsRef.current;
-      if (offsets) {
+      const shift = shiftRef.current;
+      if (offsets && shift) {
         const f = Math.max(
           0,
           Math.min(offsets.length - 1, Math.round(v.currentTime * OFFSETS_FPS)),
         );
-        v.style.transform = `translateY(${offsets[f]}%)`;
+        shift.style.transform = `translateY(${offsets[f]}%)`;
       }
       pinRaf.current = requestAnimationFrame(pin);
     };
@@ -205,7 +196,6 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     void v.play();
 
     return () => {
-      v.removeEventListener("loadeddata", onLoadedData);
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("ended", onEnded);
       stopReverse();
@@ -245,13 +235,15 @@ export default function Mascot({ awakeSignal, resetSignal, busy }: MascotProps) 
     // controls stay usable under the paws; the wake hit-area below stops
     // exactly at the bar's top edge (the video overlaps the bar by
     // --mascot-w * 0.325).
-    <div
-      className={`mascot ${mp4Fallback ? "mp4-fallback" : ""} select-none`}
-    >
-      <video ref={videoRef} muted playsInline preload="auto">
-        <source src="/mascot.webm" type="video/webm" />
-        <source src="/mascot-multiply.mp4" type="video/mp4" />
-      </video>
+    <div className="mascot select-none">
+      {/* WebM with a real alpha channel is the only source — deliberately
+          no MP4 fallback: an opaque fallback painting a white box would
+          hide a broken WebM reference; a 404 fails loudly instead. */}
+      <div ref={shiftRef} className="mascot-shift">
+        <video ref={videoRef} muted playsInline preload="auto">
+          <source src="/mascot.webm" type="video/webm" />
+        </video>
+      </div>
       <button
         type="button"
         onClick={wakeUp}

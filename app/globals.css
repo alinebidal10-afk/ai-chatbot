@@ -51,25 +51,20 @@ body {
   pointer-events: none;
 }
 
-/* NO transition on the transform: the vertical offset is driven per-frame
-   from the video clock (mascot-offsets.json lookup in Mascot.tsx), which
-   keeps the contact line pinned to the bar in every beat, at any rate,
-   and through the reversed half of the SIT ping-pong. */
+/* The per-frame vertical offset (mascot-offsets.json lookup in Mascot.tsx)
+   is applied to this wrapper, NEVER to the <video> element: a transform on
+   a <video> promotes it to its own compositing layer and Chrome paints the
+   video's own frame instead of compositing its alpha against the page —
+   that is the pale rectangle. The percentage resolves against the
+   wrapper's height, which equals the video's. No transition here either:
+   the offset is keyed to the video clock frame by frame. */
+.mascot-shift {
+  width: 100%;
+}
+
 .mascot video {
   width: 100%;
   display: block;
-}
-
-/* MP4 fallback only (no VP9-alpha support): the file has a white background,
-   multiply hides it. Blending must not be isolated by a stacking context,
-   so the fallback also drops the z-index — DOM order still paints the
-   mascot in front of the bar. */
-.mascot.mp4-fallback {
-  z-index: auto;
-}
-
-.mascot.mp4-fallback video {
-  mix-blend-mode: multiply;
 }
 
 /* Tight viewports: the greeting shrinks first, then disappears — the
