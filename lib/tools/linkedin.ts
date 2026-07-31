@@ -164,8 +164,209 @@ const apolloProvider: ProfileProvider = {
   },
 };
 
-// Swap or extend here — e.g. a Scrapin.io or People Data Labs adapter.
-const PROVIDER: ProfileProvider = apolloProvider;
+// ---------------------------------------------------------------------------
+// Scrapin adapter (Scrapin is now ReverseContact — V2 API, rc_ keys).
+// Verified against https://api.reversecontact.com/openapi.json:
+//   POST /v2/fetch/persons        {url}  -> sync, data: PersonFull
+//   POST /v2/resolve/persons/name {firstName,lastName,companyName} -> async
+//     JobAck {webhookId}; poll GET /v2/webhooks/{id} until succeeded/errored
+//   Auth: Authorization: Bearer rc_...
+// ---------------------------------------------------------------------------
+
+const SCRAPIN_BASE = "https://api.reversecontact.com";
+
+interface ScrapinPerson {
+  linkedinUrl?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  headline?: string | null;
+  summary?: string | null;
+  location?: {
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+  } | null;
+  currentPosition?: {
+    title?: string | null;
+    companyName?: string | null;
+  } | null;
+  experience?: {
+    title?: string | null;
+    companyName?: string | null;
+    startEndDate?: unknown;
+  }[];
+  education?: {
+    schoolName?: string | null;
+    degreeName?: string | null;
+    fieldOfStudy?: string | null;
+    startEndDate?: unknown;
+  }[];
+}
+
+function scrapinDates(range: unknown): string | null {
+  if (!range || typeof range !== "object") return null;
+  const r = range as { start?: unknown; end?: unknown };
+  const fmt = (d: unknown) => {
+    if (!d || typeof d !== "object") return null;
+    const { month, year } = d as { month?: number; year?: number };
+    return year ? `${month ? `${month}/` : ""}${year}` : null;
+  };
+  const start = fmt(r.start);
+  const end = fmt(r.end) ?? (start ? "present" : null);
+  return start ? `${start} - ${end}` : null;
+}
+
+function scrapinToProfile(p: ScrapinPerson, inputUrl?: string): Profile {
+  return {
+    fullName: [p.firstName, p.lastName].filter(Boolean).join(" ") || null,
+    headline: p.headline ?? null,
+    currentTitle: p.currentPosition?.title ?? null,
+    currentCompany: p.currentPosition?.companyName ?? null,
+    location:
+      [p.location?.city, p.location?.state, p.location?.country]
+        .filter(Boolean)
+        .join(", ") || null,
+    about: p.summary ?? null,
+    experience: (p.experience ?? []).slice(0, 6).map((e) => ({
+      title: e.title ?? null,
+      company: e.companyName ?? null,
+      dates: scrapinDates(e.startEndDate),
+    })),
+    education: (p.education ?? []).slice(0, 4).map((e) => ({
+      school: e.schoolName ?? null,
+      degree: [e.degreeName, e.fieldOfStudy].filter(Boolean).join(", ") || null,
+      dates: scrapinDates(e.startEndDate),
+    })),
+    profileUrl: p.linkedinUrl ?? inputUrl ?? null,
+    sources: ["scrapin"],
+  };
+}
+
+async function scrapinRequest(
+  key: string,
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<
+  | { ok: true; envelope: { success?: boolean; data?: unknown; error?: { code?: string; message?: string } | null } }
+  | { ok: false; detail: string }
+> {
+  let res: Response;
+  try {
+    res = await fetch(`${SCRAPIN_BASE}${path}`, {
+      method: body ? "POST" : "GET",
+      headers: {
+        authorization: `Bearer ${key}`,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000),
+      cache: "no-store",
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      detail: `Scrapin request failed before a response: ${err instanceof Error ? err.message : "unknown"} (network restriction, not auth).`,
+    };
+  }
+  const envelope = (await res.json().catch(() => null)) as
+    | { success?: boolean; data?: unknown; error?: { code?: string; message?: string } | null }
+    | null;
+  if (!res.ok || !envelope) {
+    // "Person not found in database" arrives as an HTTP 404 error envelope
+    // (no credits consumed) — that is the common miss, not a provider fault.
+    if (envelope && /not found/i.test(envelope.error?.message ?? "")) {
+      return { ok: true, envelope };
+    }
+    const hint =
+      res.status === 401 || res.status === 403
+        ? "The key is missing, wrong, or the plan does not include this endpoint."
+        : res.status === 402
+          ? "Out of credits."
+          : res.status === 429
+            ? "Rate limited — retry with backoff."
+            : "Unexpected provider error.";
+    console.error(`[linkedin] Scrapin ${res.status} on ${path}: ${JSON.stringify(envelope)?.slice(0, 200)}`);
+    return { ok: false, detail: `Scrapin returned HTTP ${res.status}. ${hint}` };
+  }
+  return { ok: true, envelope };
+}
+
+const scrapinProvider: ProfileProvider = {
+  id: "scrapin",
+  configured: () => Boolean(process.env.SCRAPIN_API_KEY),
+  async fetch(input) {
+    const key = process.env.SCRAPIN_API_KEY;
+    if (!key) return { kind: "unavailable", detail: "SCRAPIN_API_KEY is not configured." };
+
+    // URL input: synchronous fetch
+    if (input.url) {
+      const res = await scrapinRequest(key, "/v2/fetch/persons", { url: input.url });
+      if (!res.ok) return { kind: "unavailable", detail: res.detail };
+      if (!res.envelope.success || !res.envelope.data) {
+        const code = res.envelope.error?.code ?? "";
+        const message = res.envelope.error?.message ?? "";
+        if (/NOT_FOUND/i.test(code) || /not found/i.test(message)) {
+          return { kind: "not-found" };
+        }
+        return {
+          kind: "unavailable",
+          detail: `Scrapin error ${code || "unknown"}: ${message || "no message"}`,
+        };
+      }
+      return { kind: "profile", profile: scrapinToProfile(res.envelope.data as ScrapinPerson, input.url) };
+    }
+
+    // Name input: async resolve + short poll. Requires a company.
+    if (!input.name) return { kind: "not-found" };
+    if (!input.company?.trim()) {
+      return {
+        kind: "unavailable",
+        detail: "Scrapin name resolution needs a company name alongside the person's name.",
+      };
+    }
+    const parts = input.name.split(/\s+/);
+    const ack = await scrapinRequest(key, "/v2/resolve/persons/name", {
+      firstName: parts.slice(0, -1).join(" ") || parts[0],
+      lastName: parts[parts.length - 1],
+      companyName: input.company.trim(),
+    });
+    if (!ack.ok) return { kind: "unavailable", detail: ack.detail };
+    const webhookId = (ack.envelope.data as { webhookId?: string } | undefined)?.webhookId;
+    if (!ack.envelope.success || !webhookId) {
+      return {
+        kind: "unavailable",
+        detail: `Scrapin resolve did not return a job id: ${JSON.stringify(ack.envelope.error) ?? "unknown"}`,
+      };
+    }
+
+    // Poll the async job for up to ~20s.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const poll = await scrapinRequest(key, `/v2/webhooks/${webhookId}`);
+      if (!poll.ok) return { kind: "unavailable", detail: poll.detail };
+      const job = poll.envelope.data as
+        | { status?: string; data?: unknown; errorCode?: string | null }
+        | undefined;
+      if (job?.status === "succeeded") {
+        if (!job.data) return { kind: "not-found" };
+        // The resolve payload nests the person; accept either shape.
+        const person = ((job.data as { person?: ScrapinPerson }).person ?? job.data) as ScrapinPerson;
+        return { kind: "profile", profile: scrapinToProfile(person) };
+      }
+      if (job?.status === "errored") {
+        if (/NOT_FOUND/i.test(job.errorCode ?? "")) return { kind: "not-found" };
+        return { kind: "unavailable", detail: `Scrapin resolve job errored: ${job.errorCode ?? "unknown"}` };
+      }
+    }
+    return { kind: "unavailable", detail: "Scrapin resolve job did not finish within 20s." };
+  },
+};
+
+// Provider selection: first configured adapter wins; Scrapin is preferred.
+const PROVIDERS: ProfileProvider[] = [scrapinProvider, apolloProvider];
+function currentProvider(): ProfileProvider {
+  return PROVIDERS.find((p) => p.configured()) ?? PROVIDERS[0];
+}
 
 // ---------------------------------------------------------------------------
 // Path B — public search index via the Anthropic server-side web search tool
@@ -273,6 +474,7 @@ export async function readLinkedInProfile(
     const cleanInput: LinkedInLookupInput = { url, name, company: input.company };
 
     // Path A first; fall through to B when unconfigured, failing, or empty.
+    const PROVIDER = currentProvider();
     const provider = await PROVIDER.fetch(cleanInput);
     const providerNote =
       provider.kind === "unavailable"
@@ -297,6 +499,24 @@ export async function readLinkedInProfile(
     }
 
     const searchProfile = search?.found ? (search.profile ?? null) : null;
+
+    // Name lookups: when the provider couldn't resolve by name (e.g. the
+    // trial plan gates the resolve endpoint) but search found the profile
+    // URL, retry the provider with that URL — URL fetch is the cheaper,
+    // more widely available call, and it restores the rich provider data.
+    if (provider.kind !== "profile" && !url && searchProfile?.profileUrl) {
+      const retry = await PROVIDER.fetch({ url: searchProfile.profileUrl });
+      if (retry.kind === "profile") {
+        const merged = mergeProfiles(retry.profile, searchProfile);
+        return {
+          ok: true,
+          data: {
+            ...merged,
+            note: `Data sources: ${merged.sources.join(" + ")} (search located the profile URL; the ${PROVIDER.id} provider supplied the profile data). Name the sources in the answer and cite the profile URL.`,
+          },
+        };
+      }
+    }
 
     if (provider.kind === "profile") {
       const merged = mergeProfiles(provider.profile, searchProfile);
