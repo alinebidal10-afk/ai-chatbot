@@ -1,19 +1,60 @@
+import { getClient } from "@/lib/providers/anthropic";
 import type { ToolResult } from "./index";
 
 /**
- * LinkedIn returns a login wall to unauthenticated requests and forbids
- * scraping in its terms, so this tool never fetches linkedin.com and never
- * runs a headless browser. Three layers, tried in order, so the tool
- * degrades instead of failing outright:
+ * LinkedIn's own API cannot read arbitrary profiles and direct fetching hits
+ * a login wall (and is forbidden by LinkedIn's terms) — this tool never
+ * fetches linkedin.com and never runs a headless browser. Two sources, both
+ * used, in order:
  *
- *   1. Apollo.io People Enrichment (people/match) — richest data.
- *   2. Public search results — LinkedIn result titles carry
- *      "Name - Headline - Company | LinkedIn"; clearly labelled as search.
- *   3. Honest failure — ok:false, never invented data.
+ *   Path A — a profile data provider, behind the ProfileProvider interface
+ *            so the provider can be swapped without touching anything else.
+ *            Current adapter: Apollo.io people/match.
+ *   Path B — the public search index, via the Anthropic API's server-side
+ *            web search tool. Public profile titles carry
+ *            "Name - Headline - Company | LinkedIn".
  *
- * Privacy guard: real people. Responses are never cached to disk, and the
+ * Results are normalised into one Profile shape; when both paths return
+ * data they are merged (provider fields win, search fills gaps) and both
+ * appear in `sources`. Never fabricate; on ambiguity, list the candidates.
+ *
+ * Privacy guard: real people. No responses are cached to disk, and the
  * system prompt forbids volunteering a lookup the user did not ask for.
  */
+
+export interface LinkedInLookupInput {
+  url?: string;
+  name?: string;
+  company?: string;
+}
+
+interface Profile {
+  fullName: string | null;
+  headline?: string | null;
+  currentTitle?: string | null;
+  currentCompany?: string | null;
+  location?: string | null;
+  about?: string | null;
+  experience?: { title: string | null; company: string | null; dates?: string | null }[];
+  education?: { school: string | null; degree?: string | null; dates?: string | null }[];
+  profileUrl: string | null;
+  sources: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Path A — profile data provider behind a swappable adapter
+// ---------------------------------------------------------------------------
+
+type ProviderOutcome =
+  | { kind: "profile"; profile: Profile }
+  | { kind: "not-found" }
+  | { kind: "unavailable"; detail: string };
+
+interface ProfileProvider {
+  id: string;
+  configured(): boolean;
+  fetch(input: LinkedInLookupInput): Promise<ProviderOutcome>;
+}
 
 interface ApolloEmployment {
   organization_name?: string;
@@ -37,184 +78,180 @@ interface ApolloPerson {
   employment_history?: ApolloEmployment[];
 }
 
-export interface LinkedInLookupInput {
-  url?: string;
-  name?: string;
-  company?: string;
-}
+/** Apollo.io people/match adapter. Surfaces the real HTTP status and body —
+ *  the status distinguishes a plan problem from a missing person. */
+const apolloProvider: ProfileProvider = {
+  id: "apollo",
+  configured: () => Boolean(process.env.APOLLO_API_KEY),
+  async fetch(input) {
+    const key = process.env.APOLLO_API_KEY;
+    if (!key) return { kind: "unavailable", detail: "APOLLO_API_KEY is not configured." };
 
-type ApolloOutcome =
-  | { kind: "person"; person: ApolloPerson }
-  | { kind: "not-found" }
-  | { kind: "unavailable"; detail: string };
-
-/** Layer 1. Surfaces the real HTTP status and body — a generic message
- *  hides the difference between a plan problem and a missing person. */
-async function apolloLookup(input: LinkedInLookupInput): Promise<ApolloOutcome> {
-  const key = process.env.APOLLO_API_KEY;
-  if (!key) {
-    return { kind: "unavailable", detail: "APOLLO_API_KEY is not configured." };
-  }
-
-  const endpoint = new URL("https://api.apollo.io/api/v1/people/match");
-  if (input.url) {
-    endpoint.searchParams.set("linkedin_url", input.url);
-  } else if (input.name) {
-    const parts = input.name.split(/\s+/);
-    if (parts.length > 1) {
-      endpoint.searchParams.set("first_name", parts.slice(0, -1).join(" "));
-      endpoint.searchParams.set("last_name", parts[parts.length - 1]);
-    } else {
-      endpoint.searchParams.set("name", input.name);
-    }
-    if (input.company?.trim()) {
-      endpoint.searchParams.set("organization_name", input.company.trim());
-    }
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "x-api-key": key, "content-type": "application/json" },
-      signal: AbortSignal.timeout(15000),
-      cache: "no-store",
-    });
-  } catch (err) {
-    return {
-      kind: "unavailable",
-      detail: `Apollo request failed before a response: ${err instanceof Error ? err.message : "unknown"} (network restriction, not auth).`,
-    };
-  }
-
-  if (!res.ok) {
-    const body = (await res.text().catch(() => "")).slice(0, 300);
-    console.error(`[linkedin] Apollo ${res.status}: ${body}`);
-    const hint =
-      res.status === 401 || res.status === 403
-        ? "The key is missing, wrong, or the plan does not include API enrichment (needs a master key from Settings > Integrations > API)."
-        : res.status === 422
-          ? "The request shape was rejected — field names may have changed; check Apollo's current docs."
-          : res.status === 429
-            ? "Rate limited — retry with backoff."
-            : "Unexpected provider error.";
-    return {
-      kind: "unavailable",
-      detail: `Apollo returned HTTP ${res.status}. ${hint} Response body: ${body || "(empty)"}`,
-    };
-  }
-
-  const data = (await res.json().catch(() => null)) as {
-    person?: ApolloPerson | null;
-  } | null;
-  // 200 with an empty person is the COMMON case, not an error: Apollo's
-  // B2B coverage misses students and most people outside that world.
-  if (!data?.person) return { kind: "not-found" };
-  return { kind: "person", person: data.person };
-}
-
-/** Layer 2: public search results (DuckDuckGo's HTML endpoint, keyless).
- *  Public LinkedIn profiles are indexed and the result title alone carries
- *  "Name - Headline - Company | LinkedIn". */
-async function publicSearchLookup(
-  input: LinkedInLookupInput,
-): Promise<{ title: string; url: string; snippet: string } | null> {
-  const queries: string[] = [];
-  const handle = input.url?.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1];
-  if (handle) {
-    queries.push(`linkedin.com/in/${handle}`);
-    queries.push(`"${handle}" LinkedIn profile`);
-  }
-  if (input.name) {
-    queries.push(
-      `"${input.name}"${input.company ? ` "${input.company}"` : ""} site:linkedin.com`,
-    );
-  }
-
-  // The html endpoint throttles bursts with an empty 202 page; the lite
-  // endpoint sits in a different bucket and uses the same uddg wrapping.
-  const engines = [
-    (q: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
-    (q: string) => `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`,
-  ];
-
-  for (const q of queries) {
-    for (const engine of engines) {
-      const html = await fetchSearchPage(engine(q));
-      if (!html) continue;
-
-      // Both endpoints wrap result links as /l/?uddg=<encoded>. Take every
-      // anchor, then keep the first that resolves to a LinkedIn profile.
-      const anchors = [
-        ...html.matchAll(/<a[^>]+href="([^"]*uddg=[^"]+)"[^>]*>([\s\S]*?)<\/a>/g),
-      ].map((m) => ({
-        url: decodeDdgHref(m[1]),
-        title: m[2].replace(/<[^>]+>/g, "").trim(),
-      }));
-      const snippets = [
-        ...html.matchAll(
-          /class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<td[^>]+class='result-snippet'[^>]*>([\s\S]*?)<\/td>/g,
-        ),
-      ].map((m) => (m[1] ?? m[2] ?? "").replace(/<[^>]+>/g, "").trim());
-
-      const hit = anchors.find(
-        (a) => /linkedin\.com\/(in|company)\//i.test(a.url) && a.title,
-      );
-      if (hit) {
-        const snippet =
-          snippets.find((s) => s.length > 40) ?? snippets[0] ?? "";
-        return { title: hit.title, url: hit.url, snippet };
+    const endpoint = new URL("https://api.apollo.io/api/v1/people/match");
+    if (input.url) {
+      endpoint.searchParams.set("linkedin_url", input.url);
+    } else if (input.name) {
+      const parts = input.name.split(/\s+/);
+      if (parts.length > 1) {
+        endpoint.searchParams.set("first_name", parts.slice(0, -1).join(" "));
+        endpoint.searchParams.set("last_name", parts[parts.length - 1]);
+      } else {
+        endpoint.searchParams.set("name", input.name);
       }
-      // A real results page without a LinkedIn hit answers the query —
-      // move to the next query instead of hammering the other endpoint.
-      if (anchors.length > 0) break;
+      if (input.company?.trim()) {
+        endpoint.searchParams.set("organization_name", input.company.trim());
+      }
     }
-  }
-  return null;
+
+    let res: Response;
+    try {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "x-api-key": key, "content-type": "application/json" },
+        signal: AbortSignal.timeout(15000),
+        cache: "no-store",
+      });
+    } catch (err) {
+      return {
+        kind: "unavailable",
+        detail: `Apollo request failed before a response: ${err instanceof Error ? err.message : "unknown"} (network restriction, not auth).`,
+      };
+    }
+
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 300);
+      console.error(`[linkedin] Apollo ${res.status}: ${body}`);
+      const hint =
+        res.status === 401 || res.status === 403
+          ? "The key is missing, wrong, or the plan does not include API enrichment (needs a master key from Settings > Integrations > API)."
+          : res.status === 422
+            ? "The request shape was rejected — field names may have changed; check Apollo's current docs."
+            : res.status === 429
+              ? "Rate limited — retry with backoff."
+              : "Unexpected provider error.";
+      return {
+        kind: "unavailable",
+        detail: `Apollo returned HTTP ${res.status}. ${hint} Response body: ${body || "(empty)"}`,
+      };
+    }
+
+    const data = (await res.json().catch(() => null)) as { person?: ApolloPerson | null } | null;
+    // 200 with an empty person is the COMMON case, not an error: Apollo's
+    // B2B coverage misses students and most people outside that world.
+    const p = data?.person;
+    if (!p) return { kind: "not-found" };
+
+    const experience = Array.isArray(p.employment_history)
+      ? p.employment_history.slice(0, 6).map((e) => ({
+          title: e.title ?? null,
+          company: e.organization_name ?? null,
+          dates: [e.start_date, e.current ? "present" : e.end_date].filter(Boolean).join(" - ") || null,
+        }))
+      : [];
+    return {
+      kind: "profile",
+      profile: {
+        fullName: p.name ?? [p.first_name, p.last_name].filter(Boolean).join(" ") ?? null,
+        headline: p.headline ?? null,
+        currentTitle: p.title ?? null,
+        currentCompany: p.organization?.name ?? null,
+        location: [p.city, p.state, p.country].filter(Boolean).join(", ") || null,
+        experience,
+        profileUrl: p.linkedin_url ?? input.url ?? null,
+        sources: ["apollo"],
+      },
+    };
+  },
+};
+
+// Swap or extend here — e.g. a Scrapin.io or People Data Labs adapter.
+const PROVIDER: ProfileProvider = apolloProvider;
+
+// ---------------------------------------------------------------------------
+// Path B — public search index via the Anthropic server-side web search tool
+// ---------------------------------------------------------------------------
+
+const SEARCH_MODEL = "claude-haiku-4-5";
+
+interface SearchLookupResult {
+  found: boolean;
+  ambiguous?: boolean;
+  candidates?: { name?: string; distinguishedBy?: string }[];
+  profile?: Profile;
 }
 
-async function fetchSearchPage(url: string): Promise<string | null> {
+/** LinkedIn allows search engines to index public profile titles and meta
+ *  descriptions even though the page itself is walled. A small model with
+ *  the server-side web_search tool runs targeted queries and extracts the
+ *  fields — strictly from search results, never invented. */
+async function webSearchLookup(
+  input: LinkedInLookupInput,
+): Promise<SearchLookupResult | null> {
+  const target = input.url
+    ? `the LinkedIn profile at ${input.url}`
+    : `the LinkedIn profile of "${input.name}"${input.company ? ` who works at "${input.company}"` : ""}`;
+
+  const instructions = input.url
+    ? `Search for this exact URL first: ${input.url} — then run one broader search on the person's name (from the URL handle or the results).`
+    : `Search: site:linkedin.com/in "${input.name}"${input.company ? ` "${input.company}"` : ""} — then run one broader search on "${input.name}" to pick up publicly reported roles from other sources.`;
+
   try {
-    const res = await fetch(url, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-      },
-      signal: AbortSignal.timeout(10000),
+    const response = await getClient().messages.create({
+      model: SEARCH_MODEL,
+      max_tokens: 1024,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+      system: `You look up LinkedIn profile facts from PUBLIC SEARCH RESULTS only. Public profile result titles follow "Name - Headline - Company | LinkedIn"; snippets often carry the location. Use only what the search results state - never guess or fill gaps from general knowledge. If several different people match, do not pick one.
+
+Reply with STRICT JSON only (no prose, no code fences), exactly one of:
+{"found":true,"ambiguous":false,"profile":{"fullName":...,"headline":...,"currentTitle":...,"currentCompany":...,"location":...,"about":...,"profileUrl":...}}
+{"found":true,"ambiguous":true,"candidates":[{"name":...,"distinguishedBy":"one line: company/role/location that tells them apart"}]}
+{"found":false}
+Use null for unknown fields. profileUrl must be the linkedin.com/in/... URL from the results.`,
+      messages: [{ role: "user", content: `Find ${target}. ${instructions}` }],
     });
-    // A 202 is the throttle page — no results in it.
-    if (!res.ok || res.status === 202) return null;
-    return await res.text();
-  } catch {
+
+    const text = response.content
+      .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as SearchLookupResult & {
+      profile?: Omit<Profile, "sources">;
+    };
+    if (!parsed.found) return { found: false };
+    if (parsed.ambiguous) {
+      return { found: true, ambiguous: true, candidates: parsed.candidates ?? [] };
+    }
+    if (!parsed.profile) return { found: false };
+    return {
+      found: true,
+      profile: { ...parsed.profile, sources: ["web_search"] } as Profile,
+    };
+  } catch (err) {
+    console.error(`[linkedin] web search lookup failed: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 }
 
-function decodeDdgHref(href: string): string {
-  // DDG wraps result URLs as /l/?uddg=<encoded>
-  const m = href.match(/[?&]uddg=([^&]+)/);
-  if (m) {
-    try {
-      return decodeURIComponent(m[1]);
-    } catch {
-      return href;
-    }
-  }
-  return href;
-}
+// ---------------------------------------------------------------------------
+// Merge + entry point
+// ---------------------------------------------------------------------------
 
-/** "Name - Headline - Company | LinkedIn" -> parts */
-function parseSearchTitle(title: string): {
-  name: string | null;
-  headline: string | null;
-  company: string | null;
-} {
-  const cleaned = title.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
-  const parts = cleaned.split(/\s+[-–—]\s+/).map((p) => p.trim());
+/** Provider fields win; search fills the gaps; both stay in sources. */
+function mergeProfiles(provider: Profile, search: Profile | null): Profile {
+  if (!search) return provider;
   return {
-    name: parts[0] || null,
-    headline: parts[1] || null,
-    company: parts[2] || null,
+    fullName: provider.fullName ?? search.fullName,
+    headline: provider.headline ?? search.headline,
+    currentTitle: provider.currentTitle ?? search.currentTitle,
+    currentCompany: provider.currentCompany ?? search.currentCompany,
+    location: provider.location ?? search.location,
+    about: provider.about ?? search.about,
+    experience: provider.experience?.length ? provider.experience : search.experience,
+    education: provider.education?.length ? provider.education : search.education,
+    profileUrl: provider.profileUrl ?? search.profileUrl,
+    sources: [...provider.sources, ...search.sources],
   };
 }
 
@@ -235,65 +272,57 @@ export async function readLinkedInProfile(
     }
     const cleanInput: LinkedInLookupInput = { url, name, company: input.company };
 
-    // Layer 1: Apollo enrichment
-    const apollo = await apolloLookup(cleanInput);
-    if (apollo.kind === "person") {
-      const p = apollo.person;
-      const history = Array.isArray(p.employment_history)
-        ? p.employment_history.slice(0, 5).map((e) => ({
-            title: e.title ?? null,
-            company: e.organization_name ?? null,
-            startDate: e.start_date ?? null,
-            endDate: e.end_date ?? null,
-            current: e.current ?? null,
-          }))
-        : [];
+    // Path A first; fall through to B when unconfigured, failing, or empty.
+    const provider = await PROVIDER.fetch(cleanInput);
+    const providerNote =
+      provider.kind === "unavailable"
+        ? `The data provider (${PROVIDER.id}) was unavailable: ${provider.detail}`
+        : provider.kind === "not-found"
+          ? `The person is not in the data provider's (${PROVIDER.id}) database.`
+          : null;
+
+    // Path B always runs unless the provider already gave a full profile
+    // (then it only fills gaps).
+    const search = await webSearchLookup(cleanInput);
+
+    if (search?.ambiguous) {
       return {
         ok: true,
         data: {
-          source: "provider",
-          name: p.name ?? [p.first_name, p.last_name].filter(Boolean).join(" ") ?? null,
-          headline: p.headline ?? null,
-          title: p.title ?? null,
-          company: p.organization?.name ?? null,
-          location: [p.city, p.state, p.country].filter(Boolean).join(", ") || null,
-          previousRoles: history,
-          profileUrl: p.linkedin_url ?? url ?? null,
+          ambiguous: true,
+          note: "Several different people match this name. Do NOT pick one - tell the user and list what distinguishes the candidates, then ask which they mean.",
+          candidates: search.candidates,
         },
       };
     }
 
-    // Layer 2: public search results (clearly labelled as such)
-    const search = await publicSearchLookup(cleanInput);
-    if (search) {
-      const parsed = parseSearchTitle(search.title);
+    const searchProfile = search?.found ? (search.profile ?? null) : null;
+
+    if (provider.kind === "profile") {
+      const merged = mergeProfiles(provider.profile, searchProfile);
       return {
         ok: true,
         data: {
-          source: "public-search",
-          note:
-            "This comes from PUBLIC SEARCH RESULTS, not from LinkedIn itself" +
-            (apollo.kind === "unavailable"
-              ? ` (the enrichment provider was unavailable: ${apollo.detail})`
-              : " (the person is not in the enrichment provider's database)") +
-            ". Present it as search-derived and cite the profile URL.",
-          name: parsed.name,
-          headline: parsed.headline,
-          company: parsed.company,
-          resultTitle: search.title,
-          resultSnippet: search.snippet.slice(0, 400),
-          profileUrl: search.url,
+          ...merged,
+          note: `Data sources: ${merged.sources.join(" + ")}. Name the source in the answer (provider data is read from ${PROVIDER.id}; web_search data comes from publicly indexed search results about the profile, not from LinkedIn itself). Cite the profile URL.`,
         },
       };
     }
 
-    // Layer 3: honest failure — never invent
+    if (searchProfile) {
+      return {
+        ok: true,
+        data: {
+          ...searchProfile,
+          note: `Data source: publicly indexed SEARCH RESULTS about the profile, not LinkedIn itself${providerNote ? ` (${providerNote})` : ""}. Say so plainly and cite the profile URL. Full employment/education history is usually not available via search.`,
+        },
+      };
+    }
+
+    // Neither path found anything — honest failure, never invention.
     return {
       ok: false,
-      reason:
-        apollo.kind === "unavailable"
-          ? `No profile data available. ${apollo.detail} Public search also returned nothing usable. Do not invent profile data.`
-          : "That person is not in the enrichment provider's database and public search returned nothing usable. Do not invent profile data.",
+      reason: `No clear match found. ${providerNote ?? ""} Public search also returned nothing usable. Say so and stop - do not invent profile data.`.trim(),
     };
   } catch (err) {
     return {
