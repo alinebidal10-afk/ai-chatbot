@@ -32,13 +32,15 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: "read_linkedin_profile",
     description:
-      "Read a LinkedIn profile (name, headline, company, experience summary) via a configured data provider. Call this when the user provides a LinkedIn profile URL or asks about someone's LinkedIn. Returns ok:false when access is not configured - report that plainly and never invent profile data.",
+      "Read a LinkedIn profile (name, headline, current company and title, location, previous roles) via a configured enrichment provider. Call this ONLY when the user explicitly asks about a specific person's LinkedIn - never volunteer a lookup. Accepts a LinkedIn URL, or a name plus company. Returns ok:false when access is not configured or the person is not in the provider's database - report that plainly and never invent profile data.",
     input_schema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "Full LinkedIn profile URL." },
+        url: { type: "string", description: "Full LinkedIn profile URL, if the user gave one." },
+        name: { type: "string", description: "Person's full name, when no URL was given." },
+        company: { type: "string", description: "Company the person works at, to disambiguate a name lookup." },
       },
-      required: ["url"],
+      required: [],
     },
   },
   {
@@ -82,7 +84,11 @@ export async function runTool(
           typeof args.limit === "number" ? args.limit : 5,
         );
       case "read_linkedin_profile":
-        return await readLinkedInProfile(String(args.url ?? ""));
+        return await readLinkedInProfile({
+          url: args.url == null ? undefined : String(args.url),
+          name: args.name == null ? undefined : String(args.name),
+          company: args.company == null ? undefined : String(args.company),
+        });
       case "summarize_youtube":
         return await summarizeYoutube(String(args.url ?? ""));
       default:
