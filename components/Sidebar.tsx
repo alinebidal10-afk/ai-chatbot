@@ -19,6 +19,7 @@ interface SidebarProps {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onDeleteAll: () => void;
+  onClose: () => void;
 }
 
 const actionRowClass =
@@ -33,6 +34,7 @@ export default function Sidebar({
   onRename,
   onDelete,
   onDeleteAll,
+  onClose,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -76,6 +78,20 @@ export default function Sidebar({
       aria-hidden={!open}
     >
       <div className="flex h-full w-full flex-col p-3 lg:w-72">
+        {/* The panel carries its own dismissal: on a phone the overlay
+            covers the hamburger that opened it, so without this there is
+            no way back out. 44x44 hit area unconditionally. */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close sidebar"
+            title="Close sidebar"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-ink hover:bg-cat-highlight/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink"
+          >
+            <X size={18} strokeWidth={1.75} />
+          </button>
+        </div>
         <button type="button" onClick={onNewChat} className={actionRowClass}>
           <MessageSquarePlus size={16} strokeWidth={1.75} />
           New chat

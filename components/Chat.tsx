@@ -33,6 +33,11 @@ export default function Chat() {
       return !v;
     });
   }, []);
+
+  const closeSidebar = useCallback(() => {
+    setSidebarOpen(false);
+    window.localStorage.setItem(SIDEBAR_KEY, "0");
+  }, []);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -68,6 +73,20 @@ export default function Chat() {
     };
   }, []);
   const keyboardOpen = keyboardInset > 0;
+
+  // Escape closes the sidebar — but not while typing in a field, where
+  // Escape already means "cancel this edit" (rename, search).
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      closeSidebar();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sidebarOpen, closeSidebar]);
 
   // On mobile the sidebar overlays the chat, so leaving it open after a
   // selection would land the user on a conversation they cannot see.
@@ -321,6 +340,7 @@ export default function Chat() {
         onRename={(id, t) => void renameConversation(id, t)}
         onDelete={(id) => void deleteConversation(id)}
         onDeleteAll={() => void deleteAll()}
+        onClose={closeSidebar}
       />
 
       {/* Scrim behind the overlaying sidebar on small screens; tapping it
