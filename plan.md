@@ -48,19 +48,19 @@ tablosuyla bar'a oturuyor.
 
 ## Açık işler (öncelik sırasıyla)
 
-1. **Deployment Protection'ı kapat** — site şu an yalnızca takım üyelerine açık
-   (302 → SSO). Vercel paneli → Settings → Deployment Protection → Vercel
-   Authentication → Disabled. *(Dashboard erişimi gerektirir — kullanıcı adımı)*
-2. **Turso veritabanı** — production'da sohbet geçmişi için gerekli; şu an DB
-   uçları prod'da çalışmaz. `turso auth signup` sonrası: DB oluştur, şemayı uygula
-   (`npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`),
-   `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`'ı Vercel env'e ekle, yeniden deploy.
-3. **GitHub ↔ Vercel bağlantısı** — push'ta otomatik deploy için hesapta GitHub
+1. **GitHub ↔ Vercel bağlantısı** — push'ta otomatik deploy için hesapta GitHub
    Login Connection kurulmalı (Settings → Git). O zamana dek deploy: `npx vercel --prod`.
-4. **Kalan canlı doğrulamalar** — görsel ekleme ve model değiştirme akışları
+2. **Kalan canlı doğrulamalar** — görsel ekleme ve model değiştirme akışları
    production anahtaryla uçtan uca test edilmedi (araçlar ve akış test edildi).
-5. *(Opsiyonel)* **Apollo anahtarı** — LinkedIn'de ikinci sağlayıcı olarak hazır
+3. *(Opsiyonel)* **Apollo anahtarı** — LinkedIn'de ikinci sağlayıcı olarak hazır
    (`APOLLO_API_KEY`); Scrapin deneme kredisi (~96 kaldı) bitince alternatif.
+
+Tamamlananlar (31 Temmuz): Deployment Protection kapatıldı (site herkese açık,
+200). Turso, Vercel Marketplace entegrasyonuyla kuruldu — DB
+`database-bole-lighthouse`, şema uygulandı, env'ler tüm ortamlara enjekte
+edildi; production'da mesaj gönderme/başlık/kalıcılık uçtan uca doğrulandı.
+`.env.local`'daki TURSO satırları bilerek yorumda: yerel geliştirme
+`file:./dev.db` kullanır, prod DB'ye bağlanmak istersen yorumdan çıkar.
 
 ## İyileştirme fikirleri (sonrası için)
 

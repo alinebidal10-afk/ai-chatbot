@@ -54,6 +54,12 @@
       "sourceType": "github",
       "skillPath": "prisma-upgrade-v7/SKILL.md",
       "computedHash": "0e07dc2831f86cf27627df914db43d862b0fc75d72c1f9070434aab7940bad7c"
+    },
+    "turso-cloud": {
+      "source": "tursodatabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/turso-cloud/SKILL.md",
+      "computedHash": "6bdc1ca45154caeb33e42ad232f760db7f5483f2a29f41339cbb3e998b519d5b"
     }
   }
 }
