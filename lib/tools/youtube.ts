@@ -30,7 +30,13 @@ export function extractVideoId(url: string): string | null {
 
 let _yt: Promise<Innertube> | null = null;
 function getInnertube(): Promise<Innertube> {
-  if (!_yt) _yt = Innertube.create();
+  if (!_yt) {
+    _yt = Innertube.create();
+    // A transient failure must not poison the cache for every later call.
+    _yt.catch(() => {
+      _yt = null;
+    });
+  }
   return _yt;
 }
 
@@ -125,6 +131,60 @@ async function fetchTranscriptViaAndroid(
   }
 }
 
+/**
+ * Metadata straight from the watch page's embedded videoDetails. Works even
+ * where the InnerTube API answers LOGIN_REQUIRED ("confirm you're not a
+ * bot") for datacenter IPs — the page itself is still served with title,
+ * channel, duration and description, just without caption tracks.
+ */
+export async function fetchWatchPageMeta(videoId: string): Promise<{
+  title: string;
+  author: string | null;
+  lengthSeconds: number | null;
+  shortDescription: string | null;
+} | null> {
+  try {
+    const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        "accept-language": "en-US,en;q=0.9",
+        cookie: "CONSENT=YES+1",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    // The page contains several "videoDetails" objects (e.g. the embedded
+    // player overlay's). The player response's one starts with our videoId.
+    const at = html.indexOf(`"videoDetails":{"videoId":"${videoId}"`);
+    if (at === -1) return null;
+    const scope = html.slice(at, at + 30000);
+    const unescape = (s: string): string => {
+      try {
+        return JSON.parse(`"${s}"`) as string;
+      } catch {
+        return s;
+      }
+    };
+    const field = (name: string): string | null => {
+      const m = scope.match(new RegExp(`"${name}":"((?:[^"\\\\]|\\\\.)*)"`));
+      return m ? unescape(m[1]) : null;
+    };
+    const title = field("title");
+    if (!title) return null;
+    const length = scope.match(/"lengthSeconds":"(\d+)"/);
+    return {
+      title,
+      author: field("author"),
+      lengthSeconds: length ? Number(length[1]) : null,
+      shortDescription: field("shortDescription")?.slice(0, 1500) ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchOembed(videoId: string) {
   try {
     const res = await fetch(
@@ -209,39 +269,63 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
     let description: string | null = null;
     let transcript: string | null = null;
     let transcriptLanguage: string | null = null;
+    // YouTube answers LOGIN_REQUIRED ("confirm you're not a bot") to the
+    // InnerTube API from datacenter IPs. Crucially getInfo does NOT throw
+    // for it — it "succeeds" with empty basic_info — so it must be detected
+    // explicitly or every fallback below is silently skipped.
+    let accessBlocked = false;
 
     try {
       const yt = await getInnertube();
       const info = await yt.getInfo(videoId);
+      accessBlocked = info.playability_status?.status === "LOGIN_REQUIRED";
       title = info.basic_info.title ?? null;
       channel = info.basic_info.author ?? null;
       durationSeconds = info.basic_info.duration ?? null;
       description = info.basic_info.short_description?.slice(0, 1500) ?? null;
 
-      try {
-        const t = await info.getTranscript();
-        transcriptLanguage = t.selectedLanguage ?? null;
-        const segments = t.transcript?.content?.body?.initial_segments ?? [];
-        const text = segments
-          .map((s) => ("snippet" in s ? (s.snippet?.text ?? "") : ""))
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
-        transcript = text || null;
-      } catch {
-        transcript = null;
-      }
-      if (!transcript) {
-        // get_transcript can 400 while caption tracks still exist — try the
-        // raw ANDROID caption path before concluding there are no captions.
-        const fallback = await fetchTranscriptViaAndroid(videoId);
-        if (fallback) {
-          transcript = fallback.text;
-          transcriptLanguage = fallback.language;
+      if (!accessBlocked) {
+        try {
+          const t = await info.getTranscript();
+          transcriptLanguage = t.selectedLanguage ?? null;
+          const segments = t.transcript?.content?.body?.initial_segments ?? [];
+          const text = segments
+            .map((s) => ("snippet" in s ? (s.snippet?.text ?? "") : ""))
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+          transcript = text || null;
+        } catch {
+          transcript = null;
+        }
+        if (!transcript) {
+          // get_transcript can 400 while caption tracks still exist — try
+          // the raw ANDROID caption path before concluding no captions.
+          const fallback = await fetchTranscriptViaAndroid(videoId);
+          if (fallback) {
+            transcript = fallback.text;
+            transcriptLanguage = fallback.language;
+          }
         }
       }
     } catch {
-      // Innertube failed entirely — oEmbed still gives title + channel.
+      // Innertube itself failed — caption state is unknown, so the note
+      // below must say "could not be retrieved", not "captions disabled".
+      accessBlocked = true;
+    }
+
+    if (!title) {
+      // The watch page is served even where the API is bot-walled, and its
+      // videoDetails carry title, channel, duration and description.
+      const page = await fetchWatchPageMeta(videoId);
+      if (page) {
+        title = page.title;
+        channel = page.author;
+        durationSeconds = page.lengthSeconds;
+        description = page.shortDescription;
+      }
+    }
+    if (!title) {
       const oembed = await fetchOembed(videoId);
       title = oembed?.title ?? null;
       channel = oembed?.author_name ?? null;
@@ -269,7 +353,9 @@ export async function summarizeYoutube(url: string): Promise<ToolResult> {
         data: {
           ...base,
           transcriptAvailable: false,
-          note: "No transcript was available (captions disabled or missing for this language). The summary must be based only on the title, channel and description, and must say so plainly. Never fabricate content.",
+          note: accessBlocked
+            ? "The transcript could not be retrieved: YouTube refused automated caption access from this server (bot check or lookup failure). Captions may well exist on the video. The summary must be based only on the title, channel and description, must say plainly that the transcript was not accessible, and must never fabricate content."
+            : "No transcript was available (captions disabled or missing for this language). The summary must be based only on the title, channel and description, and must say so plainly. Never fabricate content.",
           description,
         },
       };
